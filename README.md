@@ -127,7 +127,7 @@ Faydalı seçenekler:
 
 | Seçenek | Ne işe yarar |
 | --- | --- |
-| `--merge-colors 8` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar (örnek görselde 664 → 47 renk). Varsayılan kapalı |
+| `--merge-colors N` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar. Varsayılan kapalı; güvenli değeri `--verify` söyler |
 | `--bg-tol N` | Dama rengi toleransı (varsayılan 3). Arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
@@ -141,7 +141,24 @@ Sonuca güvenmek yerine ölçebilirsiniz:
 python3 tools/pixelart_extract.py girdi.png cikti.png --verify
 ```
 
-Üç soruya cevap verir: ızgara gerçekten oturuyor mu (hücre içi varyans, tam sayıya yuvarlanmış ızgarayla karşılaştırmalı), her hücreye tek bir renk atanabiliyor mu, ve bir hücrede *gerçekten* farklı iki renk çarpışıyor mu. Sonuncusu gerçek detay kaybının tek olası kaynağıdır; 0 çıkması çıkarımın kaynağın izin verdiği ölçüde birebir olduğu anlamına gelir.
+Dört şey raporlar: ızgara gerçekten oturuyor mu (hücre içi varyans, tam sayıya yuvarlanmış ızgarayla karşılaştırmalı), her hücreye tek bir renk atanabiliyor mu, bir hücrede *gerçekten* farklı iki renk çarpışıyor mu, ve kaynağın gürültü tabanı ne kadar.
+
+Üçüncü madde gerçek detay kaybının tek olası kaynağıdır; 0 çıkması çıkarımın kaynağın izin verdiği ölçüde birebir olduğu anlamına gelir.
+
+### Kaynak gürültüsü ve palet
+
+Çıkarım hiçbir rengi **uydurmaz**: her çıktı pikselinin rengi, kaynakta o konumda aynen bulunan bir renktir (ortalama değil, en sık görülen renk alınır). Yani hücreler arası tüm varyasyon varsayılan olarak korunur — hiçbir şey yumuşatılmaz.
+
+Ama AI render'ları düz olması gereken alanlarda bile ±1 seviyesinde rastgele gürültü üretiyor. Bu gözle görülmez, ancak paleti şişirir (örnek görselde 2300 piksele karşı 716 renk). Kasıtlı gölge basamakları bunun çok üstünde olduğu için ikisi ayrıştırılabilir.
+
+`--verify` bunu ölçer ve güvenli bir tolerans önerir — öneri, ölçülen gürültü tavanının iki katıdır, yani yapısı gereği kasıtlı tonal adımlara dokunamaz:
+
+```
+4) Kaynak gurultusu: palet 716 renk
+   duz bolgelerde sapma: ort 0.54, %95'i <= 2.0  (249 hucre uzerinden)
+   -> --merge-colors 4 kullanilsaydi: palet 716 -> 121, piksellerin %34'i hic
+      degismezdi, en buyuk kayma 4/255
+```
 
 Bağımlılık sadece `numpy` ve `pillow`:
 

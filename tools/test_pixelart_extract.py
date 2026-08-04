@@ -224,6 +224,44 @@ def test_cleanup_removes_specks():
     check("temizlik: leke temizlikte silindi", red_clean == 0, f"{red_clean} piksel kaldi")
 
 
+def test_noise_floor_measurement():
+    """Bilinen buyuklukte gurultu enjekte edip, olcumun onu dogru yakaladigini ve
+    onerdigi toleransin kasitli tonal adimin ALTINDA kaldigini dogrular."""
+    rng = np.random.default_rng(11)
+    rgba = np.zeros((40, 40, 4), np.uint8)
+    rgba[5:35, 5:35, 3] = 255
+    body = np.zeros((30, 30, 3), np.int16)
+    body[:, :] = (120, 120, 130)
+    body[:, 15:] = (160, 160, 170)          # 40 birimlik kasitli tonal adim
+    body += rng.integers(-1, 2, body.shape)  # +/-1 gurultu
+    rgba[5:35, 5:35, :3] = np.clip(body, 0, 255).astype(np.uint8)
+
+    n = px.measure_noise_floor(rgba)
+    check("gurultu olcumu: guvenilir sayilabildi", n["reliable"])
+    if not n["reliable"]:
+        return
+    check("gurultu olcumu: enjekte edilen +/-1 dogru yakalandi",
+          n["jitter_p95"] <= 3, f"p95={n['jitter_p95']:.1f}")
+    check("gurultu olcumu: onerilen tolerans tonal adimin cok altinda",
+          2 <= n["recommended_merge_tol"] <= 10, f"tol={n['recommended_merge_tol']}")
+
+    # onerilen toleransla birlestirme tonal adimi BOZMAMALI
+    merged = px.merge_near_colors(rgba.copy(), n["recommended_merge_tol"])
+    step = int(np.abs(merged[20, 19, :3].astype(int) - merged[20, 20, :3].astype(int)).max())
+    check("gurultu olcumu: onerilen tolerans tonal adimi koruyor", step >= 35, f"{step}")
+
+
+def test_merge_preserves_edges():
+    """Palet birlestirme yuksek kontrastli gecisleri bozmamali."""
+    rgba = np.zeros((20, 20, 4), np.uint8)
+    rgba[:, :, 3] = 255
+    rgba[:, :10, :3] = (30, 30, 35)
+    rgba[:, 10:, :3] = (220, 215, 210)          # 190 birimlik kontur benzeri gecis
+    merged = px.merge_near_colors(rgba.copy(), 16)
+    contrast = int(np.abs(merged[0, 9, :3].astype(int) - merged[0, 10, :3].astype(int)).max())
+    check("merge: yuksek kontrastli gecis korunuyor", contrast >= 180, f"{contrast}")
+
+
 def test_helpers():
     """Yardimci fonksiyonlarin birim testleri."""
     mask = np.zeros((5, 5), bool)
@@ -278,6 +316,8 @@ if __name__ == "__main__":
         test_background_color_collision,
         test_already_native,
         test_cleanup_removes_specks,
+        test_noise_floor_measurement,
+        test_merge_preserves_edges,
         test_helpers,
     ]
     for fn in tests:

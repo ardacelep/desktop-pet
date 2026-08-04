@@ -605,6 +605,69 @@ def verify_extraction(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid,
     }
 
 
+def measure_noise_floor(rgba: np.ndarray) -> dict:
+    """Kaynagin rastgele renk gurultusunun buyuklugunu olcer ve buna dayali,
+    guvenli bir palet birlestirme toleransi onerir.
+
+    Olcum yalnizca YEREL OLARAK DUZ bolgelerde yapilir (3x3 komsulugundaki renk
+    yayilimi kucuk olan hucreler): orada olmasi gereken tek bir renktir, sapma ne
+    varsa gurultudur. Kenarlarin ve golge basamaklarinin buyuklugu bilincli olarak
+    olculmuyor — duz bir tonal basamakta yerel medyan basamagi aynen urettigi icin
+    o olcum yaniltici cikiyordu, arkasinda duramayacagimiz bir sayiyi raporlamak
+    yerine hic raporlamiyoruz.
+
+    Onerilen tolerans = olculen gurultu tavaninin (95. yuzdelik) iki kati. Bu
+    YAPISI GEREGI guvenli: gurultu mesafesinin iki katindan uzak hicbir rengi
+    birlestirmedigi icin kasitli tonal adimlara (olculen ornekte 20+ birim)
+    dokunamaz."""
+    alpha = rgba[:, :, 3] > 0
+    A = rgba[:, :, :3].astype(np.float32)
+
+    shifts = [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
+    stacks = [np.stack([np.roll(np.roll(A[:, :, c], dy, 0), dx, 1)
+                        for dy, dx in shifts]) for c in range(3)]
+    median = np.stack([np.median(s, axis=0) for s in stacks], axis=-1)
+    spread = np.max([s.max(0) - s.min(0) for s in stacks], axis=0)
+    inner = np.stack([np.roll(np.roll(alpha, dy, 0), dx, 1) for dy, dx in shifts]).all(0)
+
+    deviation = np.abs(A - median).max(axis=2)
+    flat = alpha & inner & (spread <= 25)
+
+    if flat.sum() < 20:
+        return {"reliable": False, "flat_cells": int(flat.sum()),
+                "palette": int(len(np.unique(pack_rgb(rgba[:, :, :3][alpha]))))}
+
+    p95 = float(np.percentile(deviation[flat], 95))
+    return {
+        "reliable": True,
+        "flat_cells": int(flat.sum()),
+        "jitter": float(deviation[flat].mean()),
+        "jitter_p95": p95,
+        "palette": int(len(np.unique(pack_rgb(rgba[:, :, :3][alpha])))),
+        "recommended_merge_tol": int(np.clip(round(p95 * 2), 2, 12)),
+    }
+
+
+def print_noise_floor(noise: dict, rgba: np.ndarray):
+    print(f"4) Kaynak gurultusu: palet {noise['palette']} renk")
+    if not noise["reliable"]:
+        print(f"   duz bolge az ({noise['flat_cells']} hucre) — gurultu olcumu "
+              "guvenilir degil, palet birlestirmeyi gozle kontrol edin")
+        return
+
+    tol = noise["recommended_merge_tol"]
+    print(f"   duz bolgelerde sapma: ort {noise['jitter']:.2f}, "
+          f"%95'i <= {noise['jitter_p95']:.1f}  ({noise['flat_cells']} hucre uzerinden)")
+
+    merged = merge_near_colors(rgba.copy(), tol)
+    alpha = rgba[:, :, 3] > 0
+    shift = np.abs(merged[:, :, :3].astype(int) - rgba[:, :, :3].astype(int)).max(axis=2)[alpha]
+    after = int(len(np.unique(pack_rgb(merged[:, :, :3][alpha]))))
+    print(f"   -> --merge-colors {tol} kullanilsaydi: palet {noise['palette']} -> {after}, "
+          f"piksellerin %{(shift == 0).mean() * 100:.0f}'i hic degismezdi, "
+          f"en buyuk kayma {int(shift.max())}/255")
+
+
 def print_verification(report: dict):
     print("\n--- DOGRULAMA ---")
     print(f"1) Izgara:  hucre ici varyans = {report['variance']:.1f}"
@@ -726,6 +789,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         else:
             print("\n--- DOGRULAMA ---\nGorsel zaten native; indirgeme yapilmadigi icin "
                   "kayip da soz konusu degil.")
+        print_noise_floor(measure_noise_floor(rgba), rgba)
 
     opaque_before = int((rgba[:, :, 3] > 0).sum())
     if debug_dir:
