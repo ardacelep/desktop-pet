@@ -128,7 +128,7 @@ Faydalı seçenekler:
 | Seçenek | Ne işe yarar |
 | --- | --- |
 | `--merge-colors N` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar. Varsayılan kapalı; güvenli değeri `--verify` söyler |
-| `--bg-tol N` | Dama rengi toleransı (varsayılan 3). Arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
+| `--bg-tol N` | Dama rengi toleransı. Varsayılan olarak görselin kenarından **ölçülerek** seçilir; arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
@@ -159,6 +159,8 @@ Ama AI render'ları düz olması gereken alanlarda bile ±1 seviyesinde rastgele
    -> --merge-colors 4 kullanilsaydi: palet 716 -> 121, piksellerin %34'i hic
       degismezdi, en buyuk kayma 4/255
 ```
+
+2048×2048 bir görsel ~10-20 saniye sürer (ızgara araması ölçüm yapıyor), 1024×1024 ise ~2 saniye.
 
 Bağımlılık sadece `numpy` ve `pillow`:
 

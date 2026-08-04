@@ -10,8 +10,11 @@ SORUN
 
 BU SCRIPT NE YAPAR
     1. Izgarayi (grid) tespit eder: periyot VE faz, ikisi de ondalikli olabilir.
+       Aday periyotlar sinir konumlarindan cikarilir, ama SECIM hucre ici varyansla
+       yapilir — sinir skoru kucuk periyotlara sistematik olarak yanli.
     2. Her hucrenin merkezinden baskin rengi ornekleyerek native cozunurluge iner.
-    3. Dama desenini gercek alfa seffafligina cevirir.
+    3. Dama desenini gercek alfa seffafligina cevirir. Tonlar her kenardan ayri
+       ornekleniyor ve tolerans olculerek seciliyor.
     4. Kalan kucuk artefaktlari temizler ve kenar bosluklarini kirpar.
 
 ONCEKI SCRIPTLERDEN FARKI — KOK SEBEP DUZELTMESI
@@ -129,17 +132,47 @@ def flood_from_seeds(allowed: np.ndarray, seeds: np.ndarray, connectivity: int =
 # 1) Izgara tespiti — periyot ve faz (ikisi de ondalikli)
 # ---------------------------------------------------------------------------
 
+def lattice_edges(period: float, phase: float, size: int,
+                  min_overlap: float = 0.5) -> np.ndarray:
+    """Izgarayi SONSUZ bir kafes kabul edip [0, size] araligini kaplayan hucre
+    sinirlarini dondurur.
+
+    Faz kadar iceriden baslamak yerine kafesi geriye dogru da uzatmak sart: aksi
+    halde faz buyudukce bastaki hucre dusuyor, hem goruntunun kenari kirpiliyor hem
+    de faz arayan optimizasyon "daha az piksel kapsa, ortalama varyans dussun"
+    yonunde YANLI hale geliyordu (olculen: 100 hucrelik bir izgara 98'e duyuyordu).
+    Bu haliyle her faz ayni pikselleri kapsiyor, dolayisiyla varyanslar kiyaslanabilir.
+
+    Tuvale yarisindan azi tasan uc hucreler atilir, kalanlar [0, size] araligina
+    kirpilir."""
+    k0 = int(np.floor((0.0 - phase) / period))
+    k1 = int(np.ceil((size - phase) / period))
+    lines = phase + np.arange(k0, k1 + 1) * period
+
+    left = np.maximum(lines[:-1], 0.0)
+    right = np.minimum(lines[1:], float(size))
+    keep = np.where((right - left) >= min_overlap * period)[0]
+    if len(keep) == 0:
+        return np.array([0.0, float(size)])
+
+    first, last = int(keep[0]), int(keep[-1])
+    edges = lines[first:last + 2].copy()
+    edges[0] = max(edges[0], 0.0)
+    edges[-1] = min(edges[-1], float(size))
+    return edges
+
+
 @dataclass
 class AxisGrid:
     period: float   # bir pixel-art hucresinin kac gercek piksel oldugu (ondalikli!)
-    phase: float    # ilk izgara cizgisinin konumu (0 olmak zorunda degil)
+    phase: float    # kafesin ofseti (0 olmak zorunda degil, negatif de olabilir)
     count: int      # eksende kac hucre var
-    quality: float  # 0..1, sinirlarin izgaraya oturma orani
+    quality: float  # 0..1, izgaranin oturma kalitesi
 
     def edges(self, size: int) -> np.ndarray:
         """Hucre sinirlarini dondurur: count+1 adet ondalikli konum."""
-        start = self.phase - np.floor((self.phase + 1e-9) / self.period) * self.period
-        return start + np.arange(self.count + 1) * self.period
+        e = lattice_edges(self.period, self.phase, size)
+        return e[:self.count + 1] if len(e) > self.count + 1 else e
 
 
 def quiet_line_ratios(arr: np.ndarray, noise_tol: float = 1.0) -> tuple[float, float]:
@@ -227,47 +260,223 @@ def _refine_lsq(pos: np.ndarray, wt: np.ndarray, period: float, phase: float,
     return float(period), float(phase), float(inliers.mean())
 
 
-def detect_axis_grid(arr: np.ndarray, axis: int, min_period: float = 2.0,
-                     name: str = "") -> AxisGrid:
+class AxisVariance:
+    """Bir eksen icin hucre ici varyansi hizli sorgulanabilir hale getirir.
+
+    Kumulatif toplamlar BIR KEZ hesaplanir, sonra her (periyot, faz) sorgusu sadece
+    hucre sayisi kadar islem. Boylece yuzlerce aday izgarayi denemek pratik oluyor."""
+
+    def __init__(self, arr: np.ndarray, axis: int, row_step: int = 4):
+        A = arr.astype(np.float64)
+        if axis == 0:
+            A = A.transpose(1, 0, 2)
+        A = A[::row_step]                      # satir altornekleme: varyans tahmini bozulmaz
+        self.size = A.shape[1]
+        self.channels = A.shape[2]
+        zeros = np.zeros((A.shape[0], 1, A.shape[2]))
+        self.cumsum = np.concatenate([zeros, np.cumsum(A, axis=1)], axis=1)
+        self.cumsum2 = np.concatenate([zeros, np.cumsum(A * A, axis=1)], axis=1)
+
+    def variance(self, period: float, phase: float) -> float:
+        """Hucre sinirlarindan 1px iceride kalan bolgelerin agirlikli varyansi.
+
+        Hucreler `lattice_edges` ile sayildigi icin her faz ayni pikselleri kapsar —
+        yoksa optimizasyon kapsamayi kucultmeyi "iyilesme" sanardi."""
+        if period < 3:
+            return float("inf")
+        edges = lattice_edges(period, phase, self.size)
+        if len(edges) < 5:
+            return float("inf")
+        a = np.ceil(edges[:-1] + 1).astype(int)
+        b = np.floor(edges[1:] - 1).astype(int)
+        keep = (b > a) & (a >= 0) & (b <= self.size)
+        a, b = a[keep], b[keep]
+        if len(a) < 4:
+            return float("inf")
+        count = (b - a)[None, :, None]
+        s = self.cumsum[:, b, :] - self.cumsum[:, a, :]
+        s2 = self.cumsum2[:, b, :] - self.cumsum2[:, a, :]
+        var = s2 / count - (s / count) ** 2
+        return float((var * count).sum() / (count.sum() * self.channels))
+
+    def best_phase(self, period: float, steps: int = 24) -> tuple[float, float]:
+        """Varyansi en aza indiren fazi bulur. Donen: (faz, varyans)."""
+        phases = np.linspace(0.0, period, steps, endpoint=False)
+        values = [self.variance(period, float(p)) for p in phases]
+        i = int(np.argmin(values))
+        return float(phases[i]), float(values[i])
+
+    def alignment_score(self, period: float) -> tuple[float, float, float]:
+        """Izgaranin bu periyoda ne kadar oturdugunu olcer.
+
+        Yontem: en iyi fazdaki varyansi, YARIM PERIYOT kaydirilmis izgaraninkiyle
+        kiyasla. Dogru periyotta hizali hucreler duz renkli, kaydirilmis hucreler ise
+        her sinir gecisini kesiyor — oran yuksek cikar. Yanlis periyotta ikisi de
+        sinir kesiyor, oran ~1'de kalir.
+
+        Donen: (oran, faz, hizali varyans)."""
+        phase, aligned = self.best_phase(period)
+        shifted = self.variance(period, (phase + period / 2) % period)
+        return shifted / max(aligned, 1e-6), phase, aligned
+
+
+def _period_seeds(pos: np.ndarray, wt: np.ndarray, size: float,
+                  min_period: float) -> list[float]:
+    """Sinir konumlarindan aday periyotlar cikarir (kaba, elemeye tabi)."""
+    periods = np.arange(min_period, max(min_period + 1.0, size / 8.0), 0.02)
+    scores = np.array([_lattice_quality(pos, wt, p)[0] for p in periods])
+    if scores.max() <= 0:
+        return []
+    floor = 0.5 * scores.max()
+    return [float(periods[i]) for i in range(1, len(scores) - 1)
+            if scores[i] > scores[i - 1] and scores[i] >= scores[i + 1] and scores[i] > floor]
+
+
+def detect_axis_grid(arr: np.ndarray, axis: int, min_period: float = 3.0,
+                     name: str = "", min_ratio: float = 3.0) -> AxisGrid:
+    """Eksendeki izgara periyodunu ve fazini tespit eder.
+
+    IKI ASAMALI, cunku tek basina hicbiri yetmiyor:
+
+    1. Sinir konumlarindan aday periyotlar (hizli ama YANILTICI). Bu skor kucuk
+       periyotlara sistematik olarak yanli: periyot ne kadar kucukse rastgele bir
+       sinir kafese denk gelme sansi o kadar yuksek. Olculen bir ornekte gercek
+       periyot 20.48 iken 1/8'i olan 2.56 daha yuksek skor aliyordu.
+    2. Her adayi (ve KATLARINI) hucre ici varyansla ele: dogru izgarada hucreler
+       duz renklidir. Bolen periyotlar da duz cikar, bu yuzden gecerliler arasindan
+       EN BUYUGU secilir. Katlari da denememiz sart, cunku 1. asama bir boleni
+       yakalamis olabilir ve gercek periyot aday listesinde hic bulunmayabilir.
+
+    Faz her aday icin ayrica optimize edilir — bazi render'larda izgara tuvali tam
+    bolmuyor (olculen bir ornekte periyot 11.06, faz 6.45) ve faz sifir varsayilirsa
+    o goruntuler tamamen yanlis cozunuyor."""
     size = arr.shape[1] if axis == 1 else arr.shape[0]
     sig = boundary_signal(arr, axis)
     pos, wt = cluster_boundaries(sig)
-    if len(pos) < 3:
-        raise ValueError(f"{name}: yeterli izgara siniri bulunamadi — gorsel pixel art olmayabilir.")
 
-    # Periyot taramasi. DIKKAT: gercek periyodun BOLENLERI de mukemmel skor verir
-    # (p'ye oturan her sinir p/2'ye de oturur), bu yuzden yuksek skorlu EN BUYUK
-    # periyodu seciyoruz. Tam kati olan periyotlar (2p) skoru dusurur.
-    max_period = max(min_period + 1.0, size / 8.0)
-    periods = np.arange(min_period, max_period, 0.01)
-    scores = np.array([_lattice_quality(pos, wt, p)[0] for p in periods])
+    seeds = _period_seeds(pos, wt, size, min_period) if len(pos) >= 3 else []
+    candidates: set[float] = set()
+    for seed in seeds:
+        for multiple in range(1, 17):
+            value = seed * multiple
+            if min_period <= value <= size / 8.0:
+                candidates.add(round(value, 3))
+    if not candidates:
+        # Sinir sinyali yoksa: "sanat tuvali tam boluyor" varsayimiyla tara
+        candidates = {round(size / n, 3) for n in range(8, 257)
+                      if min_period <= size / n <= size / 8.0}
+    log(f"  {name}: {len(seeds)} tohum -> {len(candidates)} aday periyot")
 
-    threshold = max(0.90 * scores.max(), 0.60)
-    good = np.where(scores >= threshold)[0]
-    coarse_period = float(periods[good[-1]])
-    _, coarse_phase = _lattice_quality(pos, wt, coarse_period)
-    log(f"  {name} kaba tarama: periyot={coarse_period:.3f} (skor {scores[good[-1]]:.3f}, "
-        f"maks {scores.max():.3f})")
+    av = AxisVariance(arr, axis)
+    scored = [(p, *av.alignment_score(p)) for p in sorted(candidates)]
+    viable = [s for s in scored if s[1] >= min_ratio]
 
-    period, phase, inlier_ratio = _refine_lsq(pos, wt, coarse_period, coarse_phase)
+    if not viable:
+        best = max(scored, key=lambda s: s[1]) if scored else None
+        detail = f" (en iyi oran {best[1]:.2f}, esik {min_ratio})" if best else ""
+        raise ValueError(
+            f"{name} ekseninde izgara bulunamadi{detail} — gorsel buyutulmus pixel art "
+            "olmayabilir ya da render cok bozuk olabilir.")
 
-    # Cogu render'da izgara tuvali TAM bolen (1024 = 100 x 10.24). LSQ sonucu buna
-    # cok yakinsa tam bolmeye yasla — boylece son hucrede yuvarlama artigi kalmaz.
+    # Bolenler de gecerli cikar, dogru cevap EN BUYUK olan. Ama olcum gurultusu
+    # yuzunden dogru periyodun 1-2 komsusu da listeye giriyor; en buyugun %5
+    # civarindakiler arasindan en iyi oranliyi aliyoruz.
+    largest = max(s[0] for s in viable)
+    near = [s for s in viable if s[0] >= largest * 0.95]
+    period, ratio, phase, _ = max(near, key=lambda s: s[1])
+    log(f"  {name} aday secildi: periyot={period:.3f} faz={phase:.2f} oran={ratio:.1f}")
+
+    period, phase = _refine_grid(av, period, phase)
+
+    # Cogu render'da izgara tuvali TAM bolen (1024 = 100 x 10.24). Sonuc buna cok
+    # yakinsa tam bolmeye yasla — son hucrede yuvarlama artigi kalmasin.
     n_exact = int(round(size / period))
     if n_exact > 0:
-        exact_period = size / n_exact
-        phase_snapped = phase - round(phase / exact_period) * exact_period
-        if abs(exact_period - period) < 0.02 * period and abs(phase_snapped) < 0.15 * exact_period:
-            log(f"  {name} tam bolmeye yaslandi: {size}/{n_exact} = {exact_period:.4f} "
-                f"(LSQ {period:.4f}, faz {phase:.3f})")
-            period, phase = exact_period, 0.0
+        exact = size / n_exact
+        offset = phase - round(phase / exact) * exact
+        if abs(exact - period) < 0.01 * period and abs(offset) < 0.10 * exact:
+            log(f"  {name} tam bolmeye yaslandi: {size}/{n_exact} = {exact:.4f}")
+            period, phase = exact, 0.0
 
-    start = phase - np.floor((phase + 1e-9) / period) * period
-    count = int(np.floor((size - start) / period + 1e-6))
+    count = len(lattice_edges(period, phase, size)) - 1
     if count < 1:
         raise ValueError(f"{name}: gecerli bir izgara kurulamadi (periyot={period}).")
 
-    return AxisGrid(period=period, phase=phase, count=count, quality=inlier_ratio)
+    return AxisGrid(period=period, phase=phase, count=count,
+                    quality=float(min(1.0, ratio / 20.0)))
+
+
+def detect_grid(arr: np.ndarray) -> tuple[AxisGrid, AxisGrid]:
+    """Iki ekseni birlikte tespit eder ve birbirleriyle destekler.
+
+    Pixel art hucreleri neredeyse her zaman KAREDIR, yani iki eksenin periyodu ayni
+    cikmalidir. Bunu iki yerde kullaniyoruz:
+      - Bir eksen tamamen basarisiz olursa digerinin periyodu denenir (sadece faz
+        aranir). Aksi halde tek bir zayif eksen tum cikarimi cokertiyordu.
+      - Iki eksen birbirine yakin ama esit degilse, daha iyi oturani ikisi icin de
+        kullanilir; kucuk olcum farklarinin cozunurlugu kaydirmasi onlenir.
+    Belirgin farkli cikarlarsa (kare olmayan hucre) oldugu gibi birakilir."""
+    results: dict[int, AxisGrid | None] = {}
+    errors: dict[int, str] = {}
+    for axis, name in ((1, "X"), (0, "Y")):
+        try:
+            results[axis] = detect_axis_grid(arr, axis=axis, name=name)
+        except ValueError as err:
+            results[axis] = None
+            errors[axis] = str(err)
+            log(f"  {name} basarisiz: {err}")
+
+    if results[1] is None and results[0] is None:
+        raise ValueError(errors.get(1) or errors.get(0))
+
+    # Basarisiz ekseni, calisan eksenin periyoduyla kurtar
+    for axis, other in ((1, 0), (0, 1)):
+        if results[axis] is None:
+            src = results[other]
+            size = arr.shape[1] if axis == 1 else arr.shape[0]
+            av = AxisVariance(arr, axis)
+            phase, _ = av.best_phase(src.period, steps=48)
+            count = len(lattice_edges(src.period, phase, size)) - 1
+            name = "X" if axis == 1 else "Y"
+            log(f"  {name}: diger eksenin periyodu ({src.period:.4f}) kullanildi")
+            results[axis] = AxisGrid(period=src.period, phase=phase,
+                                     count=max(1, count), quality=src.quality * 0.5)
+
+    gx, gy = results[1], results[0]
+
+    # Yakinsa birlestir: daha iyi oturan eksenin periyodu ikisi icin de kullanilir
+    spread = abs(gx.period - gy.period) / max(gx.period, gy.period)
+    if 0 < spread <= 0.05:
+        better, worse_axis = (gx, 0) if gx.quality >= gy.quality else (gy, 1)
+        size = arr.shape[1] if worse_axis == 1 else arr.shape[0]
+        av = AxisVariance(arr, worse_axis)
+        phase, _ = av.best_phase(better.period, steps=48)
+        count = len(lattice_edges(better.period, phase, size)) - 1
+        unified = AxisGrid(period=better.period, phase=phase, count=max(1, count),
+                           quality=better.quality)
+        log(f"  eksenler birlestirildi: periyot {better.period:.4f} "
+            f"(fark %{spread * 100:.1f})")
+        if worse_axis == 1:
+            gx = unified
+        else:
+            gy = unified
+
+    return gx, gy
+
+
+def _refine_grid(av: AxisVariance, period: float, phase: float,
+                 span: float = 0.02, steps: int = 41) -> tuple[float, float]:
+    """Periyot ve fazi, hucre ici varyansi en aza indirecek sekilde ince ayarlar.
+
+    Sinir konumlarina en kucuk kareler uydurmak yerine dogrudan varyansi kucultuyoruz:
+    olcut fiziksel olarak anlamli (hucreler duz renkli mi) ve zayif/gurultulu sinir
+    sinyalinden etkilenmiyor."""
+    best = (float("inf"), period, phase)
+    for candidate in np.linspace(period * (1 - span), period * (1 + span), steps):
+        ph, value = av.best_phase(float(candidate), steps=32)
+        if value < best[0]:
+            best = (value, float(candidate), ph)
+    return best[1], best[2]
 
 
 # ---------------------------------------------------------------------------
@@ -315,27 +524,39 @@ def downsample_by_mode(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid,
 # 3) Dama deseni -> gercek alfa
 # ---------------------------------------------------------------------------
 
-def detect_background_tones(small: np.ndarray, ring: int = 2, coverage: float = 0.90,
-                            max_tones: int = 4) -> list[tuple[int, int, int]]:
+def detect_background_tones(small: np.ndarray, ring: int = 2, per_side: int = 3,
+                            merge_tol: int = 4, min_share: float = 0.15) -> list[tuple[int, int, int]]:
     """Gorselin kenar seridinden dama deseninin GERCEK tonlarini ogrenir.
 
     Sabit "acik gri" varsayimi yerine ornekleme yapiyoruz; boylece pembe, mavi, bej
-    ya da koyu temali dama desenleri de calisiyor. Kenar seridi kullaniliyor cunku
-    dama oradaki neredeyse tum pikselleri kapliyor."""
-    mask = np.zeros(small.shape[:2], dtype=bool)
-    mask[:ring, :] = mask[-ring:, :] = True
-    mask[:, :ring] = mask[:, -ring:] = True
+    ya da koyu temali dama desenleri de calisiyor.
 
-    values, counts = np.unique(pack_rgb(small[mask]), return_counts=True)
-    order = np.argsort(counts)[::-1]
-    total = counts.sum()
+    Her kenar AYRI ornekleniyor: bazi render'larda dama tuval boyunca renk kaydiriyor
+    (olculen bir ornekte ust kenarda tonlar 229/253 iken alt bolgede 203/243'e
+    iniyordu). Tum kenari birlikte sayip en sik birkac rengi almak, azinlikta kalan
+    kenarin tonlarini eliyor ve o bolgede arka plan silinmeden kaliyordu."""
+    h, w = small.shape[:2]
+    sides = {
+        "ust": small[:ring, :],
+        "alt": small[-ring:, :],
+        "sol": small[:, :ring],
+        "sag": small[:, -ring:],
+    }
 
-    tones, acc = [], 0
-    for idx in order[:max_tones]:
-        tones.append(unpack_rgb(int(values[idx])))
-        acc += counts[idx]
-        if acc / total >= coverage:
-            break
+    tones: list[tuple[int, int, int]] = []
+    for region in sides.values():
+        values, counts = np.unique(pack_rgb(region), return_counts=True)
+        total = counts.sum()
+        for idx in np.argsort(-counts, kind="stable")[:per_side]:
+            # Karakter kenara dayaniyorsa onun rengi de bu kenarda gorunur; dama
+            # deseni kenarin buyuk kismini kaplamak zorunda oldugu icin kucuk
+            # paylari eliyoruz.
+            if counts[idx] / total < min_share:
+                break
+            color = unpack_rgb(int(values[idx]))
+            if any(max(abs(a - b) for a, b in zip(color, t)) <= merge_tol for t in tones):
+                continue
+            tones.append(color)
     return tones
 
 
@@ -350,9 +571,30 @@ def dilate(mask: np.ndarray) -> np.ndarray:
     return out
 
 
+def estimate_background_tolerance(small: np.ndarray, tones: list[tuple[int, int, int]],
+                                  ring: int = 3, margin: int = 3,
+                                  low: int = 3, high: int = 14) -> int:
+    """Dama tonlarinin ne kadar oynadigini OLCUP tolerans secer.
+
+    Sabit bir tolerans ise yaramiyor: olculen render'larda kenar seridinin dama
+    tonundan sapmasi (%95'lik dilim) 0 ile 9 arasinda degisiyor. 1024'luk temiz bir
+    ornekten turetilen tol=3, 2048'lik gurultulu render'larda arka planin buyuk
+    kismini birakiyordu (bir gorselde 5437 opak piksel yerine 3191 olmaliydi)."""
+    if not tones:
+        return low
+    rgb = small.astype(np.int32)
+    distance = np.min([np.abs(rgb - np.array(t, dtype=np.int32)).max(axis=2) for t in tones],
+                      axis=0)
+    mask = np.zeros(small.shape[:2], dtype=bool)
+    mask[:ring, :] = mask[-ring:, :] = True
+    mask[:, :ring] = mask[:, -ring:] = True
+    p95 = float(np.percentile(distance[mask], 95))
+    return int(np.clip(round(p95) + margin, low, high))
+
+
 def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
                         tol: int = 3, halo_tol_factor: float = 2.5,
-                        halo_width: int = 0) -> np.ndarray:
+                        halo_width: int = 2) -> np.ndarray:
     """Dama tonlarina yakin VE goruntu kenarina bagli pikselleri seffaf yapar.
 
     Iki kademeli esik:
@@ -374,6 +616,11 @@ def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
     BILINEN SINIR: karakterin uzerinde dama tonuna `tol` kadar yakin bir renk varsa
     ve o bolge kenara bagliysa, renk temelli hicbir yontem ikisini ayiramaz. Boyle
     bir durumda --bg-tol degerini dusurun."""
+    if not tones:
+        # Kenarlarda baskin bir ton yok — silinecek bir dama deseni de yok demektir.
+        return np.dstack([small.astype(np.uint8),
+                          np.full(small.shape[:2], 255, dtype=np.uint8)])
+
     rgb = small.astype(np.int32)
     strong = np.zeros(small.shape[:2], dtype=bool)
     weak = np.zeros(small.shape[:2], dtype=bool)
@@ -393,6 +640,7 @@ def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
         seeds = strong
 
     background = flood_from_seeds(strong, seeds, connectivity=4)
+
     for _ in range(max(0, halo_width)):
         background = dilate(background) & weak
 
@@ -400,9 +648,95 @@ def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
     return np.dstack([small.astype(np.uint8), alpha])
 
 
+def enrich_tones_from_background(small: np.ndarray, tones: list[tuple[int, int, int]],
+                                 tol: int, max_drift: int = 40, rounds: int = 4,
+                                 max_tones: int = 24) -> list[tuple[int, int, int]]:
+    """Bulunan arka plandan yeni dama tonlari ogrenip taramayi tekrarlar.
+
+    Neden gerekli: bazi render'larda dama deseninin tonu goruntu boyunca kayiyor —
+    olculen bir ornekte kenardan ogrenilen tonlara 24 birim uzakta, gozle bakinca
+    apacik dama olan bir bolge opak kaliyordu. Komsuluga bakan bir yayilma bunu
+    cozmuyor, cunku damanin iki tonu zaten birbirinden ~26 birim uzak: yayilma her
+    kare sinirinda duruyor. Onun yerine tonlarin KENDISINI genisletiyoruz.
+
+    Guvenlik: yeni tonlar yalnizca kenara bagli arka plandan ogrenilir ve orijinal
+    tonlardan en fazla `max_drift` uzaklasabilir, boylece karaktere sizamaz."""
+    if not tones:
+        return tones
+    rgb = small.astype(np.int32)
+    origin = np.array(tones, dtype=np.int32)
+
+    border_seed = np.zeros(small.shape[:2], dtype=bool)
+    border_seed[0, :] = border_seed[-1, :] = True
+    border_seed[:, 0] = border_seed[:, -1] = True
+
+    current = list(tones)
+    for _ in range(rounds):
+        strong = np.zeros(small.shape[:2], dtype=bool)
+        for tone in current:
+            strong |= np.abs(rgb - np.array(tone, dtype=np.int32)).max(axis=2) <= tol
+        seeds = strong & border_seed
+        if not seeds.any():
+            break
+        background = flood_from_seeds(strong, seeds, connectivity=4)
+        if not background.any():
+            break
+
+        values, counts = np.unique(pack_rgb(small[background]), return_counts=True)
+        order = np.argsort(-counts, kind="stable")
+        learned = list(current)
+        for idx in order:
+            if len(learned) >= max_tones:
+                break
+            color = np.array(unpack_rgb(int(values[idx])), dtype=np.int32)
+            if np.abs(origin - color).max(axis=1).min() > max_drift:
+                continue                      # orijinal tonlardan cok uzaklasma
+            if any(np.abs(color - np.array(t, dtype=np.int32)).max() <= tol for t in learned):
+                continue                      # zaten kapsaniyor
+            learned.append(tuple(int(v) for v in color))
+
+        if len(learned) == len(current):
+            break
+        current = learned
+
+    return current
+
+
 # ---------------------------------------------------------------------------
 # 4) Artefakt temizligi
 # ---------------------------------------------------------------------------
+
+def remove_background_remnants(rgba: np.ndarray, tones: list[tuple[int, int, int]],
+                               tol: int, share: float = 0.7) -> np.ndarray:
+    """Ana silüetten kopuk VE dama renginde olan parcalari siler.
+
+    Dama sinirina denk gelen bazi hucreler iki tonun arasinda bir renk aliyor ve
+    esigin disinda kaliyor; geriye ince seritler kaliyor. Bunlar boyut esigini
+    asabildigi icin leke temizleyicisine takilmiyorlar. Boyuta degil RENGE bakarak
+    eliyoruz: karakterin gercek parcalari dama tonunda olmaz."""
+    if not tones:
+        return rgba
+    rgba = rgba.copy()
+    opaque = rgba[:, :, 3] > 0
+    labels, num = label_components(opaque, connectivity=8)
+    if num <= 1:
+        return rgba
+
+    sizes = np.bincount(labels.ravel())
+    main = int(np.argmax(sizes[1:])) + 1
+    wide = tol * 3
+    for lbl in range(1, num + 1):
+        if lbl == main:
+            continue
+        mask = labels == lbl
+        colors = rgba[:, :, :3][mask].astype(np.int32)
+        near = np.zeros(len(colors), dtype=bool)
+        for tone in tones:
+            near |= np.abs(colors - np.array(tone, dtype=np.int32)).max(axis=1) <= wide
+        if near.mean() >= share:
+            rgba[mask] = (0, 0, 0, 0)
+    return rgba
+
 
 def remove_detached_specks(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
     """Ana silüetten KOPUK kucuk opak parcalari siler."""
@@ -538,16 +872,25 @@ def crop_to_content(rgba: np.ndarray, padding: int = 0) -> np.ndarray:
 # Hata ayiklama ciktilari
 # ---------------------------------------------------------------------------
 
-def cell_cores(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, inset: float = 1.5):
+def cell_cores(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, center_ratio: float = 0.5):
     """Her hucrenin AA sinirlarindan uzak cekirdek bolgesini dolasir.
+
+    Pencere ORANSAL (hucrenin ortadaki `center_ratio` kadari) — ornekleyicinin
+    kullandigi pencereyle ayni. Sabit piksel payi kullanmak buyuk hucrelerde
+    (2048'lik render'larda hucre 20px) kenar yumusamasini olcume karistirip
+    "detay kaybi" sayisini yapay olarak iki katina cikariyordu.
+
     Donen: (i, j, core) — core: (N,3) int32."""
     xe, ye = gx.edges(arr.shape[1]), gy.edges(arr.shape[0])
+    inset = (1.0 - center_ratio) / 2.0
     for i in range(gy.count):
-        y0, y1 = int(np.ceil(ye[i] + inset)), int(np.floor(ye[i + 1] - inset))
+        pad = (ye[i + 1] - ye[i]) * inset
+        y0, y1 = int(np.ceil(ye[i] + pad)), int(np.floor(ye[i + 1] - pad))
         if y1 <= y0:
             continue
         for j in range(gx.count):
-            x0, x1 = int(np.ceil(xe[j] + inset)), int(np.floor(xe[j + 1] - inset))
+            xpad = (xe[j + 1] - xe[j]) * inset
+            x0, x1 = int(np.ceil(xe[j] + xpad)), int(np.floor(xe[j + 1] - xpad))
             if x1 <= x0:
                 continue
             yield i, j, arr[y0:y1, x0:x1].reshape(-1, 3).astype(np.int32)
@@ -728,7 +1071,7 @@ def load_image(path: str) -> tuple[np.ndarray, np.ndarray | None]:
 
 
 def extract(input_path: str, output_path: str, preview_path: str | None = None,
-            preview_scale: int = 8, bg_tol: int = 3, speck_size: int = 12,
+            preview_scale: int = 8, bg_tol: int | None = None, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
             cleanup: bool = True, verify: bool = False) -> Image.Image:
@@ -748,14 +1091,13 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         small = arr.copy()
     else:
         log("Izgara tespiti:")
-        gx = detect_axis_grid(arr, axis=1, name="X")
-        gy = detect_axis_grid(arr, axis=0, name="Y")
+        gx, gy = detect_grid(arr)
         print(f"Izgara: periyot X={gx.period:.4f}px  Y={gy.period:.4f}px   "
               f"faz X={gx.phase:.2f}  Y={gy.phase:.2f}")
         print(f"NATIVE cozunurluk: {gx.count}x{gy.count}  "
               f"(uyum X={gx.quality:.0%} Y={gy.quality:.0%})")
 
-        if min(gx.quality, gy.quality) < 0.6:
+        if min(gx.quality, gy.quality) < 0.3:
             print("UYARI: izgara uyumu dusuk — sonucu --debug-dir ile gozle dogrulayin.",
                   file=sys.stderr)
 
@@ -780,8 +1122,15 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         rgba = np.dstack([small, np.where(alpha_small > 127, 255, 0).astype(np.uint8)])
     else:
         tones = detect_background_tones(small)
-        print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones))
-        rgba = background_to_alpha(small, tones, tol=bg_tol)
+        tol = bg_tol if bg_tol is not None else estimate_background_tolerance(small, tones)
+        enriched = enrich_tones_from_background(small, tones, tol)
+        if len(enriched) > len(tones):
+            log(f"  dama tonlari genisletildi: {len(tones)} -> {len(enriched)}")
+            tones = enriched
+        print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones),
+              f"(tolerans {tol}{'' if bg_tol is not None else ', olculerek secildi'})")
+        rgba = background_to_alpha(small, tones, tol=tol)
+        rgba = remove_background_remnants(rgba, tones, tol)
 
     if verify:
         if upscaled:
@@ -838,9 +1187,10 @@ def main(argv=None):
     parser.add_argument("output", help="Cikti PNG (native cozunurluk, gercek alfa)")
     parser.add_argument("--preview", help="Buyutulmus onizleme PNG (sadece gozle kontrol icin)")
     parser.add_argument("--preview-scale", type=int, default=8, help="Onizleme buyutme orani (varsayilan 8)")
-    parser.add_argument("--bg-tol", type=int, default=3,
-                        help="Dama rengi eslesme toleransi (varsayilan 3). Arka planin bir "
-                             "kismi kaldiysa artirin; karakterin acik renkleri yeniyorsa azaltin.")
+    parser.add_argument("--bg-tol", type=int, default=None,
+                        help="Dama rengi eslesme toleransi. Varsayilan: goruntunun kenar "
+                             "seridinden OLCULEREK secilir. Arka planin bir kismi kaldiysa "
+                             "artirin; karakterin acik renkleri yeniyorsa azaltin.")
     parser.add_argument("--speck-size", type=int, default=12,
                         help="Bu boyuta kadar olan kopuk lekeler/delikler temizlenir (varsayilan 12)")
     parser.add_argument("--center-ratio", type=float, default=0.5,

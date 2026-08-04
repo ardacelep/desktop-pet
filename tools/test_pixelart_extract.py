@@ -180,6 +180,111 @@ def test_background_color_collision():
           "tol buyutuldugunde bile korunmus — sinir belgelendigi gibi degil")
 
 
+def test_no_crash_on_unstructured_image():
+    """BUG RAPORU 1: izgara bulunamayinca IndexError ile cokuyordu.
+    Artik anlamli bir ValueError vermeli."""
+    # Duz bir gradyan: komsu sutunlar birbirine cok yakin oldugu icin "buyutulmus"
+    # sayilir ve izgara tespiti calisir — ama periyodik yapi yoktur.
+    yy, xx = np.meshgrid(np.arange(600), np.arange(600), indexing="ij")
+    noise = np.stack([(xx * 255 // 600), (yy * 255 // 600),
+                      ((xx + yy) * 255 // 1200)], axis=-1).astype(np.uint8)
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "n.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(noise, "RGB").save(src)
+        try:
+            px.extract(src, dst)
+            check("cokme yok: gurultulu gorselde anlamli hata", False, "hata vermedi")
+        except ValueError as err:
+            check("cokme yok: gurultulu gorselde anlamli hata",
+                  "izgara" in str(err).lower() or "pixel art" in str(err).lower(), str(err))
+        except IndexError as err:
+            check("cokme yok: gurultulu gorselde anlamli hata", False, f"IndexError: {err}")
+
+
+def test_fundamental_period_not_divisor():
+    """BUG RAPORU 2: gercek periyodun boleni (1/8'i) secilebiliyordu.
+    Bolenler de kafese oturdugu icin secim EN BUYUK gecerli periyot olmali."""
+    sprite, mask = make_sprite(64, 64, seed=12)
+    rendered = render_like_gemini(sprite, mask, 1024)     # gercek periyot 16
+    g = px.detect_axis_grid(rendered, axis=1, name="X")
+    check("bolen tuzagi: periyot 16 bulundu", abs(g.period - 16.0) < 0.3, f"{g.period:.3f}")
+    check("bolen tuzagi: 64 hucre", abs(g.count - 64) <= 1, f"{g.count}")
+
+    av = px.AxisVariance(rendered, 1)
+    fundamental = av.alignment_score(16.0)[0]
+    divisor = av.alignment_score(8.0)[0]
+    double = av.alignment_score(32.0)[0]
+    check("bolen tuzagi: bolen de yuksek skor aliyor (bu yuzden en buyugu secilir)",
+          divisor > 3, f"{divisor:.1f}")
+    check("bolen tuzagi: kat dusuk skor aliyor", double < fundamental / 3,
+          f"kat={double:.1f} temel={fundamental:.1f}")
+
+
+def test_phase_offset_grid():
+    """Izgara tuvali tam bolmuyorsa (kenar boslugu varsa) faz sifir degildir.
+    Gercek bir ornekte periyot 11.06, faz 6.45 olcuuldu; faz sifir varsayilirsa
+    goruntu tamamen yanlis cozunuyordu."""
+    sprite, mask = make_sprite(50, 50, seed=13)
+    inner = render_like_gemini(sprite, mask, 800)
+    canvas = np.zeros((1024, 1024, 3), np.uint8)
+    yy, xx = np.meshgrid(np.arange(1024), np.arange(1024), indexing="ij")
+    checker = ((yy // 32) + (xx // 32)) % 2
+    canvas[:] = np.where(checker[..., None] == 0,
+                         np.array([255, 255, 255], np.uint8),
+                         np.array([225, 225, 225], np.uint8))
+    off_y, off_x = 53, 37                      # izgarayi kasitli olarak kaydir
+    canvas[off_y:off_y + 800, off_x:off_x + 800] = inner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "p.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(canvas, "RGB").save(src)
+        px.extract(src, dst, cleanup=False)
+        out = np.array(Image.open(dst))
+
+    # 800/50 = 16px hucre; kirpilmis cikti sprite'in dolu bolgesi kadar olmali
+    ys, xs = np.where(mask)
+    expected = (int(ys.max() - ys.min() + 1), int(xs.max() - xs.min() + 1))
+    check("faz kaymasi: yukseklik dogru", abs(out.shape[0] - expected[0]) <= 1,
+          f"cikan {out.shape[0]}, beklenen {expected[0]}")
+    check("faz kaymasi: genislik dogru", abs(out.shape[1] - expected[1]) <= 1,
+          f"cikan {out.shape[1]}, beklenen {expected[1]}")
+
+
+def test_gradient_checkerboard():
+    """Dama deseninin tonu goruntu boyunca kayabiliyor (olculen: ustte 229/253,
+    altta 203/243). Tek bir global ton listesi bunu kaciriyor ve alt bolgede arka
+    plan silinmeden kaliyordu."""
+    sprite, mask = make_sprite(60, 60, seed=14)
+    rendered = render_like_gemini(sprite, mask, 960).astype(np.int16)
+    fade = np.linspace(0, -30, rendered.shape[0]).astype(np.int16)[:, None, None]
+    background = ~np.repeat(np.repeat(mask, 16, 0), 16, 1)
+    rendered = np.where(background[..., None], np.clip(rendered + fade, 0, 255), rendered)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "g.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(rendered.astype(np.uint8), "RGB").save(src)
+        px.extract(src, dst, no_crop=True, cleanup=False)
+        out = np.array(Image.open(dst))
+
+    if out.shape[:2] != mask.shape:
+        check("gradyanli dama: cozunurluk", False, f"{out.shape[1]}x{out.shape[0]}")
+        return
+    leftover = ((out[:, :, 3] > 0) & ~mask).sum()
+    check("gradyanli dama: arka plan tamamen silindi", leftover == 0,
+          f"{int(leftover)} piksel kaldi")
+
+
+def test_lattice_covers_full_canvas():
+    """Faz ne olursa olsun kafes tuvalin tamamini kaplamali. Aksi halde faz arayan
+    optimizasyon kapsamayi kucultmeyi 'iyilesme' saniyordu."""
+    for phase in (0.0, 3.7, 9.9, -4.2):
+        edges = px.lattice_edges(10.24, phase, 1024)
+        check(f"kafes kapsama (faz {phase}): sol kenar",
+              edges[0] <= 0.6 * 10.24, f"{edges[0]:.2f}")
+        check(f"kafes kapsama (faz {phase}): sag kenar",
+              edges[-1] >= 1024 - 0.6 * 10.24, f"{edges[-1]:.2f}")
+
+
 def test_already_native():
     """Zaten native bir dosya verilirse izgara uydurmamali."""
     sprite, mask = make_sprite(60, 60, seed=6)
@@ -314,6 +419,11 @@ if __name__ == "__main__":
         test_colored_checkerboard,
         test_dark_checkerboard,
         test_background_color_collision,
+        test_no_crash_on_unstructured_image,
+        test_fundamental_period_not_divisor,
+        test_phase_offset_grid,
+        test_gradient_checkerboard,
+        test_lattice_covers_full_canvas,
         test_already_native,
         test_cleanup_removes_specks,
         test_noise_floor_measurement,
