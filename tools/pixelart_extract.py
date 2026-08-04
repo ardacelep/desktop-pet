@@ -1217,7 +1217,7 @@ def dump_grid_overlay(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, path: str):
         yi = int(round(y))
         if 0 <= yi < overlay.shape[0]:
             overlay[yi, :] = (0, 128, 255)
-    Image.fromarray(overlay, "RGB").save(path)
+    Image.fromarray(overlay).save(path)
     log(f"  hata ayiklama: izgara katmani -> {path}")
 
 
@@ -1278,7 +1278,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
 
     if debug_dir:
         os.makedirs(debug_dir, exist_ok=True)
-        Image.fromarray(small, "RGB").resize(
+        Image.fromarray(small).resize(
             (small.shape[1] * 8, small.shape[0] * 8), Image.NEAREST
         ).save(os.path.join(debug_dir, "2_native.png"))
 
@@ -1312,7 +1312,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
 
     opaque_before = int((rgba[:, :, 3] > 0).sum())
     if debug_dir:
-        Image.fromarray(rgba, "RGBA").resize(
+        Image.fromarray(rgba).resize(
             (rgba.shape[1] * 8, rgba.shape[0] * 8), Image.NEAREST
         ).save(os.path.join(debug_dir, "3_alfa.png"))
 
@@ -1351,7 +1351,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         log(f"  kirpma: {before[1]}x{before[0]} -> {rgba.shape[1]}x{rgba.shape[0]}")
 
     palette = len(np.unique(pack_rgb(rgba[:, :, :3][rgba[:, :, 3] > 0])))
-    out = Image.fromarray(rgba, "RGBA")
+    out = Image.fromarray(rgba)
     out.save(output_path)
     print(f"Kaydedildi: {output_path} ({out.width}x{out.height}, {palette} renk) "
           f"— native cozunurluk, hicbir olcekleme uygulanmadi")

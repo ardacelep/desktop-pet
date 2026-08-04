@@ -98,7 +98,7 @@ def roundtrip(sprite, mask, canvas, cleanup=False, **kwargs):
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "in.png")
         dst = os.path.join(tmp, "out.png")
-        Image.fromarray(rendered, "RGB").save(src)
+        Image.fromarray(rendered).save(src)
         px.extract(src, dst, no_crop=True, cleanup=cleanup)
         return np.array(Image.open(dst))
 
@@ -172,7 +172,7 @@ def test_background_color_collision():
     rendered = render_like_gemini(sprite, mask, 1024)
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "i.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(rendered, "RGB").save(src)
+        Image.fromarray(rendered).save(src)
         px.extract(src, dst, no_crop=True, cleanup=False, bg_tol=12)
         eaten = np.array(Image.open(dst))
     eaten_ratio = 1.0 - (eaten[:, :, 3] > 0)[risky].mean()
@@ -190,7 +190,7 @@ def test_no_crash_on_unstructured_image():
                       ((xx + yy) * 255 // 1200)], axis=-1).astype(np.uint8)
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "n.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(noise, "RGB").save(src)
+        Image.fromarray(noise).save(src)
         try:
             px.extract(src, dst)
             check("cokme yok: gurultulu gorselde anlamli hata", False, "hata vermedi")
@@ -237,7 +237,7 @@ def test_phase_offset_grid():
 
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "p.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(canvas, "RGB").save(src)
+        Image.fromarray(canvas).save(src)
         px.extract(src, dst, cleanup=False)
         out = np.array(Image.open(dst))
 
@@ -262,7 +262,7 @@ def test_gradient_checkerboard():
 
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "g.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(rendered.astype(np.uint8), "RGB").save(src)
+        Image.fromarray(rendered.astype(np.uint8)).save(src)
         px.extract(src, dst, no_crop=True, cleanup=False)
         out = np.array(Image.open(dst))
 
@@ -292,7 +292,7 @@ def test_tone_band_touching_character():
 
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "b.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(rendered.astype(np.uint8), "RGB").save(src)
+        Image.fromarray(rendered.astype(np.uint8)).save(src)
         px.extract(src, dst, no_crop=True, cleanup=False)
         out = np.array(Image.open(dst))
 
@@ -348,7 +348,7 @@ def test_already_native():
     rgb = np.where(mask[..., None], sprite, np.array([255, 255, 255], np.uint8))
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "n.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(rgb.astype(np.uint8), "RGB").save(src)
+        Image.fromarray(rgb.astype(np.uint8)).save(src)
         px.extract(src, dst, no_crop=True)
         out = np.array(Image.open(dst))
     check("zaten native: boyut korunuyor", out.shape[:2] == (60, 60),
@@ -375,7 +375,7 @@ def test_cleanup_removes_specks():
     rendered[3 * 128:3 * 128 + 13, 1 * 128:1 * 128 + 13] = (255, 0, 0)
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = os.path.join(tmp, "i.png"), os.path.join(tmp, "o.png")
-        Image.fromarray(rendered, "RGB").save(src)
+        Image.fromarray(rendered).save(src)
         px.extract(src, dst, no_crop=True, cleanup=False)
         raw = np.array(Image.open(dst))
         px.extract(src, dst, no_crop=True, cleanup=True)

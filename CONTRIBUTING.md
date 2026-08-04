@@ -16,7 +16,13 @@ npm start
 
 Sprite'ları Gemini gibi bir modele ürettiyorsan, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
 
-Aynı animasyonun karelerini tek tek çıkarıyorsan `--no-crop` kullan. Varsayılan kırpma her kareyi **kendi** içeriğine göre kırpar; kolunu uzatan bir kare birkaç piksel daha geniş çıkar, kareler arası hizalama kayar ve karakter animasyon boyunca zıplar. Kareleri sonradan ortak bir kutuya (yatayda ortalı, ayaklar alt kenarda) şeffaf pikselle doldurup yan yana diz.
+Aynı animasyonun karelerini tek tek ürettiysen, çıkardıktan sonra [tools/pack_sheet.py](tools/pack_sheet.py) ile birleştir — kareleri elle yan yana dizme. Her kare ayrı bir üretim olduğu için karakter tuval içinde farklı yerde durur; elle dizersen animasyon titrer. Araç kareleri ayak çizgisine ve gövdeye göre hizalar, ortak kare kutuya oturtur ve `meta.json` bloğunu basar:
+
+```bash
+python3 tools/pack_sheet.py kare*.png -o characters/<ad>/walk_right_spritesheet.png --gif onizleme.gif
+```
+
+Ürettiği GIF'i açıp titreme olup olmadığına bak — PR'a da bu GIF'i ekleyebilirsin.
 
 1. Kendine bir dal aç:
 

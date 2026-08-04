@@ -51,7 +51,9 @@ pet/
 ├── tools/
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
-│   └── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
+│   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar
+│   ├── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
+│   └── test_pack_sheet.py        # Hizalayıcının regresyon testleri
 ├── assets/                 # Ham/orijinal sprite dosyaları (uygulama bunları okumaz)
 └── DESKTOP_PET_PLAN.md     # Mimari plan notları
 ```
@@ -144,6 +146,36 @@ Faydalı seçenekler:
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
 
+### Animasyon karelerini sprite sheet'e dizme
+
+Bir yürüyüşün karelerini Gemini'ye tek tek ürettirip her birini yukarıdaki gibi çıkardığınızda kareler birbirine göre **kayık** olur: her kare ayrı bir üretim olduğu için karakter tuval içinde farklı yerde durur. Yan yana dizilirse karakter her karede başka yerde görünür ve animasyon **titrer**.
+
+[tools/pack_sheet.py](tools/pack_sheet.py) kareleri içeriğe göre hizalayıp ortak bir kare kutuya yerleştirir:
+
+```bash
+python3 tools/pack_sheet.py kare1.png kare2.png kare3.png -o characters/kedi/walk_right_spritesheet.png --gif onizleme.gif
+```
+
+Hizalama iki eksende ayrı çalışır:
+
+- **dikeyde ayak çizgisine** — en alt opak satır sabitlenir, karakter yere basar
+- **yatayda referans kareyle örtüşmeyi en büyüten kaymayı arayarak** — sınır kutusunun ortasını almak yetmez, çünkü kolunu uzatan karede merkez kayar ve titreme üretir. Örtüşme araması gövde ve başı çakıştırır (piksellerin çoğunluğu oradadır)
+
+Çıktıda her kare için referansla örtüşme yüzdesi raporlanır; düşük çıkan kare işaretlenir. `--gif` ile üretilen önizlemede titreme varsa gözle görürsünüz.
+
+**Ölçekleme asla yapılmaz.** Kareler yalnızca kaydırılır ve şeffaf piksel eklenir. Karelerin native çözünürlüğü farklıysa araç uyarır ama küçültmez — düzeltme yeri üretim aşamasıdır.
+
+Girdilerin kırpılmış olup olmaması fark etmez; hizalama zaten içeriğe göre yapılır. Kareleri elle dizecekseniz `--no-crop` gerekir, `pack_sheet.py` kullanıyorsanız gerekmez.
+
+Sonunda yapıştırmaya hazır `meta.json` bloğu basılır:
+
+```
+meta.json icin:
+  "walk_right": {"file": "walk_right_spritesheet.png", "frameSize": 95, "frameCount": 7, "frameDuration": 120}
+  "nativeFrameSize": 95,
+  "displayHeight": 95
+```
+
 ### Kayıpsızlığı doğrulama
 
 Sonuca güvenmek yerine ölçebilirsiniz:
@@ -212,7 +244,7 @@ pip3 install numpy pillow
 Değişiklik yaparsanız regresyon testlerini çalıştırın:
 
 ```bash
-python3 tools/test_pixelart_extract.py
+python3 tools/test_pixelart_extract.py && python3 tools/test_pack_sheet.py
 ```
 
 ## Birlikte geliştirme
