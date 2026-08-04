@@ -274,6 +274,63 @@ def test_gradient_checkerboard():
           f"{int(leftover)} piksel kaldi")
 
 
+def test_tone_band_touching_character():
+    """BUG RAPORU 3: ton kaymasi MONOTON olmak zorunda degil — olculen gorselde
+    dama tonu goruntunun ortasindaki bir bantta 231'den 203'e inip tekrar
+    yukseliyordu. Kalinti karakterin koluna degdigi icin "kopuk parca" temizligi
+    de onu yakalayamiyor, ekranda ince yatay bir cizgi olarak kaliyordu."""
+    sprite, mask = make_sprite(60, 60, seed=15)
+    rendered = render_like_gemini(sprite, mask, 960).astype(np.int16)
+
+    # ortada bir bant: arka plan 28 birim koyulasip geri aciliyor
+    rows = np.arange(rendered.shape[0])
+    dip = -28.0 * np.exp(-((rows - rendered.shape[0] * 0.55) ** 2) / (2 * 60.0 ** 2))
+    background = ~np.repeat(np.repeat(mask, 16, 0), 16, 1)
+    rendered = np.where(background[..., None],
+                        np.clip(rendered + dip.astype(np.int16)[:, None, None], 0, 255),
+                        rendered)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "b.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(rendered.astype(np.uint8), "RGB").save(src)
+        px.extract(src, dst, no_crop=True, cleanup=False)
+        out = np.array(Image.open(dst))
+
+    if out.shape[:2] != mask.shape:
+        check("ton banti: cozunurluk", False, f"{out.shape[1]}x{out.shape[0]}")
+        return
+    opaque = out[:, :, 3] > 0
+    check("ton banti: arka plan tamamen silindi", (opaque & ~mask).sum() == 0,
+          f"{int((opaque & ~mask).sum())} piksel kaldi")
+
+    # Bant, paletteki (230,230,235)'i dama tonuyla BIREBIR ayni hale getirdigi
+    # yerlerde onu yer — bu kacinilmaz ve test_background_color_collision'da
+    # belgelenen sinirin ta kendisi. Geri kalan her sey korunmali.
+    risky = (sprite == np.array([230, 230, 235])).all(axis=2)
+    lost = int((mask & ~opaque & ~risky).sum())
+    check("ton banti: karakter yenmedi (bilinen renk cakismasi disinda)", lost == 0,
+          f"{lost} piksel kayboldu")
+
+
+def test_local_tones_not_matched_one_to_one():
+    """Kaymis ACIK ton, global KOYU tona kaymis koyu tondan daha yakin olabilir
+    (olculen: acik 241 -> global koyu 231'e 10, koyu 207 -> 231'e 24 uzak).
+    Adaylari global tonlara tek tek eslemek bu durumda ikisini de ayni tona atayip
+    diger tonu bosta birakiyordu; o satirda arka planin yarisi opak kaliyordu."""
+    band = np.zeros((12, 40, 3), np.uint8)
+    # dama tonlari 231/253 iken bu seritte 207/241'e kaymis durumda
+
+    yy, xx = np.meshgrid(np.arange(12), np.arange(40), indexing="ij")
+    band[:] = np.where((((yy // 3) + (xx // 3)) % 2)[..., None] == 0,
+                       np.array([207, 207, 207], np.uint8),
+                       np.array([241, 241, 241], np.uint8))
+    tones = [(231, 231, 231), (253, 253, 253)]
+    field = px.BackgroundToneField(band, tones)
+    worst = int(field.distance.max())
+    check("yerel ton: kaymis ton cifti birlikte yakalandi", worst <= 4,
+          f"en kotu sapma {worst} (tek tek esleme yapilsaydi ~26 olurdu)")
+
+
 def test_lattice_covers_full_canvas():
     """Faz ne olursa olsun kafes tuvalin tamamini kaplamali. Aksi halde faz arayan
     optimizasyon kapsamayi kucultmeyi 'iyilesme' saniyordu."""
@@ -423,6 +480,8 @@ if __name__ == "__main__":
         test_fundamental_period_not_divisor,
         test_phase_offset_grid,
         test_gradient_checkerboard,
+        test_tone_band_touching_character,
+        test_local_tones_not_matched_one_to_one,
         test_lattice_covers_full_canvas,
         test_already_native,
         test_cleanup_removes_specks,

@@ -16,6 +16,8 @@ npm start
 
 Sprite'ları Gemini gibi bir modele ürettiyorsan, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
 
+Aynı animasyonun karelerini tek tek çıkarıyorsan `--no-crop` kullan. Varsayılan kırpma her kareyi **kendi** içeriğine göre kırpar; kolunu uzatan bir kare birkaç piksel daha geniş çıkar, kareler arası hizalama kayar ve karakter animasyon boyunca zıplar. Kareleri sonradan ortak bir kutuya (yatayda ortalı, ayaklar alt kenarda) şeffaf pikselle doldurup yan yana diz.
+
 1. Kendine bir dal aç:
 
    ```bash

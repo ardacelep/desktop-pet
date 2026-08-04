@@ -103,6 +103,15 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 
 `displayHeight` ile `nativeFrameSize` eşit olduğunda piksel sanatı en net görünür; ara ölçekler (ör. 88 → 80) bulanıklaştırır. Ölçek gerekiyorsa tam katlar (176, 44) tercih edin.
 
+### Kare boyutu neden kare?
+
+Motor kareyi kare varsayıyor: [sprite-animator.js](renderer/sprite-animator.js) canvas'ı `frameSize × frameSize` yapıp sheet'ten aynı boyutta dilim alıyor. Karakteriniz 40×95 çıktıysa onu **germeden**, şeffaf pikselle 96×96'ya tamamlayın:
+
+- **yatayda ortalayın** — sola yürüyüş `flip` ile üretiliyor ve aynalama canvas'ın ortasına göre yapılıyor; karakter kutuda ortalı değilse her dönüşte yana zıplar
+- **ayakları alt kenara oturtun** — yoksa havada durur
+
+Karakterler arasında ortak bir boyut **zorlamayın**. Native çözünürlük karakterden karaktere değişir (ölçülen bir sette 84, 85, 95, 156) ve hepsini aynı boya getirmek 156 → 95 gibi ondalıklı bir ölçek gerektirir; bu, piksel sanatının bozulmadan sağ çıkamayacağı tek işlemdir. Boy farkı rahatsız ediyorsa doğru yer üretim aşamasıdır: karakteri aynı ızgara yoğunluğunda yeniden ürettirin.
+
 Karakterin **sağa bakıyor** olması gerekir — sola yürüyüş `flip` ile üretilir. Sola bakan bir sheet çizdiyseniz `walk_right`'a `"flip": true`, `walk_left`'e `false` verin.
 
 `characters/characters.json` yalnızca ilk kurulumda hangi karakterle başlanacağını tutar; yeni karakter eklerken bu dosyaya dokunmayın.
@@ -129,6 +138,7 @@ Faydalı seçenekler:
 | --- | --- |
 | `--merge-colors N` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar. Varsayılan kapalı; güvenli değeri `--verify` söyler |
 | `--bg-tol N` | Dama rengi toleransı. Varsayılan olarak görselin kenarından **ölçülerek** seçilir; arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
+| `--no-crop` | Kenar boşluklarını kırpmaz. **Aynı karakterin birden fazla karesini çıkarırken şart** — aksi halde her kare kendi içeriğine göre kırpılır ve animasyonda karakter zıplar |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
@@ -148,6 +158,12 @@ Dört şey raporlar: ızgara gerçekten oturuyor mu (hücre içi varyans, tam sa
 ### Kaynak gürültüsü ve palet
 
 Çıkarım hiçbir rengi **uydurmaz**: her çıktı pikselinin rengi, kaynakta o konumda aynen bulunan bir renktir (ortalama değil, en sık görülen renk alınır). Yani hücreler arası tüm varyasyon varsayılan olarak korunur — hiçbir şey yumuşatılmaz.
+
+Dama deseninin tonu da sabit varsayılmaz. Ölçülen bir Gemini çıktısında koyu ton görselin ortasındaki bir bantta `231`'den `203`'e inip tekrar yükseliyordu; iki tonu global kabul eden bir eşik o bandı opak bırakıyor, bant karakterin koluna değdiği için "kopuk parça" temizliğine de takılmıyordu. Bu yüzden tonlar her satır ve her sütun için kenar şeridinden ayrı örneklenir. `--verbose` kayma varsa bunu yazar:
+
+```
+ton kaymasi: goruntu boyunca en fazla 28 birim — satir/sutun basina yerel ton kullaniliyor
+```
 
 Ama AI render'ları düz olması gereken alanlarda bile ±1 seviyesinde rastgele gürültü üretiyor. Bu gözle görülmez, ancak paleti şişirir (örnek görselde 2300 piksele karşı 716 renk). Kasıtlı gölge basamakları bunun çok üstünde olduğu için ikisi ayrıştırılabilir.
 

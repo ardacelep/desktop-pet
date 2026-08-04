@@ -13,8 +13,9 @@ BU SCRIPT NE YAPAR
        Aday periyotlar sinir konumlarindan cikarilir, ama SECIM hucre ici varyansla
        yapilir — sinir skoru kucuk periyotlara sistematik olarak yanli.
     2. Her hucrenin merkezinden baskin rengi ornekleyerek native cozunurluge iner.
-    3. Dama desenini gercek alfa seffafligina cevirir. Tonlar her kenardan ayri
-       ornekleniyor ve tolerans olculerek seciliyor.
+    3. Dama desenini gercek alfa seffafligina cevirir. Dama tonlari sabit degil:
+       her satir/sutun icin kenar seridinden AYRI ornekleniyor, cunku render'da
+       ton goruntu boyunca kayabiliyor. Tolerans da olculerek seciliyor.
     4. Kalan kucuk artefaktlari temizler ve kenar bosluklarini kirpar.
 
 ONCEKI SCRIPTLERDEN FARKI — KOK SEBEP DUZELTMESI
@@ -571,28 +572,185 @@ def dilate(mask: np.ndarray) -> np.ndarray:
     return out
 
 
-def estimate_background_tolerance(small: np.ndarray, tones: list[tuple[int, int, int]],
-                                  ring: int = 3, margin: int = 3,
-                                  low: int = 3, high: int = 14) -> int:
-    """Dama tonlarinin ne kadar oynadigini OLCUP tolerans secer.
+def _cluster_counts(packed: np.ndarray, merge_tol: int) -> list[tuple[np.ndarray, int]]:
+    """Paketlenmis renkleri frekansa gore kumeler; birbirine `merge_tol` kadar yakin
+    renkler tek kumede toplanir ve sayilari birlesir.
 
-    Sabit bir tolerans ise yaramiyor: olculen render'larda kenar seridinin dama
-    tonundan sapmasi (%95'lik dilim) 0 ile 9 arasinda degisiyor. 1024'luk temiz bir
-    ornekten turetilen tol=3, 2048'lik gurultulu render'larda arka planin buyuk
-    kismini birakiyordu (bir gorselde 5437 opak piksel yerine 3191 olmaliydi)."""
-    if not tones:
+    Neden gerekli: AI render'inda ayni dama karesi 203/205/206 gibi bir kac degere
+    dagiliyor. Ham frekansa bakinca hicbiri tek basina anlamli bir paya ulasmiyor,
+    birlikte bakinca kenarin yarisini kapliyorlar."""
+    values, counts = np.unique(packed, return_counts=True)
+    clusters: list[tuple[np.ndarray, int]] = []
+    for idx in np.argsort(-counts, kind="stable"):
+        color = np.array(unpack_rgb(int(values[idx])), dtype=np.int32)
+        for pos, (anchor, total) in enumerate(clusters):
+            if np.abs(anchor - color).max() <= merge_tol:
+                clusters[pos] = (anchor, total + int(counts[idx]))
+                break
+        else:
+            clusters.append((color, int(counts[idx])))
+    return clusters
+
+
+def _checker_square(small: np.ndarray, merge_tol: int = 6, default: int = 3) -> int:
+    """Dama karesinin native piksel cinsinden kenar uzunlugunu tahmin eder.
+
+    Kenar seridinden kac piksel ornekleyecegimiz buna bagli: seritte ton CIFTININ
+    ikisi de gorunmuyorsa o satir icin yerel ton ogrenilemez, eksik kalan ton
+    global degerine geri duser ve olculen sapma sisar (bir testte tolerans
+    olmasi gereken 3 yerine 9 seciliyordu)."""
+    runs: list[int] = []
+    for line in (small[0], small[-1], small[:, 0], small[:, -1]):
+        step = np.abs(line[1:].astype(np.int32) - line[:-1].astype(np.int32)).max(axis=1)
+        edges = np.flatnonzero(step > merge_tol)
+        if len(edges) >= 2:
+            runs.extend(np.diff(edges).tolist())
+    if not runs:
+        return default
+    return int(np.clip(np.median(runs), 1, max(1, min(small.shape[:2]) // 6)))
+
+
+class BackgroundToneField:
+    """Dama tonlarini SABIT degil, KONUMA BAGLI tutar.
+
+    Neden gerekli: olculen bir Gemini ciktisinda dama deseninin tonu goruntunun
+    ortasindaki bir bantta kayiyor — koyu ton 231'den 203'e, acik ton 253'ten
+    243'e iniyor, sonra tekrar yukseliyor. Iki tonu global sabit kabul edip
+    tolerans vermek o bandi opak birakiyordu; bant karakterin koluna degdigi icin
+    "kopuk parca" temizligine de takilmiyor, ekranda ince yatay bir cizgi olarak
+    kaliyordu.
+
+    Toleransi buyutmek cozum degil: kayma 24 birime ulasiyor, o kadar genis bir
+    esik karakterin acik renkli bolgelerini de yutar. Onun yerine her SATIR ve her
+    SUTUN icin kenar seridinden ayri ornek aliyoruz — o satirdaki gercek dama rengi
+    zaten o satirin kenarinda duruyor.
+
+    Guvenlik: bir seritten en fazla global ton sayisi kadar yerel ton alinir,
+    aday ancak global tonlarin BIRINE `max_drift` kadar yakinsa ve serittte
+    `min_share` paya ulasiyorsa kabul edilir. Yani karakter kenara dayadiginda
+    rengi tonun yerine gecebilmesi icin hem dama tonuna yakin olmasi hem de o
+    seritte dama deseninden daha cok piksel kaplamasi gerekir.
+
+    ONEMLI: adaylar global tonlara TEK TEK eslenmez. Denendi ve yanlisti: kayma
+    24 birime ulastiginda kaymis ACIK ton (241), global KOYU tona (231) kaymis
+    koyu tondan (207) daha yakin oluyor; ikisi de koyu tona atanip acik ton
+    bosta kaliyordu ve o satirda arka planin yarisi opak kaliyordu."""
+
+    def __init__(self, small: np.ndarray, tones: list[tuple[int, int, int]],
+                 ring: int | None = None, max_drift: int = 45,
+                 min_share: float = 0.08, merge_tol: int = 6):
+        h, w = small.shape[:2]
+        self.tones = tones
+        self.empty = not tones
+        if not tones:
+            self.distance = np.full((h, w), 255, dtype=np.int32)
+            self.drift = 0
+            return
+
+        rgb = small.astype(np.int32)
+        base = np.array(tones, dtype=np.int32)
+        # Serit, dama karesinden genis olmali ki satirda ton ciftinin IKISI de
+        # gorunsun; ama gereginden genis olmamali, yoksa kenara yakin duran
+        # karakter parcalari da orneklemeye giriyor (olculen bir gorselde serit
+        # 12'den 14'e cikinca secilen tolerans 3'ten 9'a firliyordu). Bu yuzden
+        # sabit bir genislik yok: yetmedigi SATIRDA genisletiliyor.
+        widths = self._ring_widths(small, ring)
+
+        distance = np.min(np.abs(rgb[:, :, None, :] - base[None, None, :, :]).max(axis=3),
+                          axis=2)
+        self.drift = 0
+
+        for axis in (0, 1):
+            if axis == 0:
+                stacks = [np.concatenate([small[:, :r], small[:, -r:]], axis=1)
+                          for r in widths]
+            else:
+                stacks = [np.concatenate([small[:r, :], small[-r:, :]], axis=0)
+                          .transpose(1, 0, 2) for r in widths]
+            local = self._line_tones([pack_rgb(s) for s in stacks], base,
+                                     max_drift, min_share, merge_tol)
+            for i, palette in enumerate(local):
+                if palette is None:
+                    continue
+                line = rgb[i] if axis == 0 else rgb[:, i]
+                d = np.abs(line[:, None, :] - palette[None, :, :]).max(axis=2).min(axis=1)
+                target = distance[i] if axis == 0 else distance[:, i]
+                np.minimum(target, d, out=target)
+                # yerel tonun global tondan ne kadar uzaklastigi — raporlanabilir bir sayi
+                gap = np.abs(palette[:, None, :] - base[None, :, :]).max(axis=2).min(axis=1)
+                self.drift = max(self.drift, int(gap.max()))
+
+        self.distance = distance
+
+    @staticmethod
+    def _ring_widths(small: np.ndarray, ring: int | None) -> list[int]:
+        """Denenecek serit genislikleri, dardan genise."""
+        cap = max(2, min(small.shape[:2]) // 3)
+        start = ring if ring is not None else _checker_square(small) + 2
+        widths, r = [], int(np.clip(start, 2, cap))
+        while True:
+            widths.append(r)
+            if r >= cap or len(widths) >= 3:
+                return widths
+            r = min(cap, r * 2)
+
+    @staticmethod
+    def _line_tones(packed_by_width: list[np.ndarray], base: np.ndarray,
+                    max_drift: int, min_share: float,
+                    merge_tol: int) -> list[np.ndarray | None]:
+        """Her satir/sutun icin yerel ton listesi. Global ton sayisini asmaz.
+
+        Serit dar basliyor; o satirda ton ciftinin tamami cikmazsa serit
+        genisletilip tekrar deneniyor. Boylece daralmanin bedeli (eksik ton)
+        ile genislemenin bedeli (karakterin orneklemeye sizmasi) yalnizca
+        gerekli satirlarda odenir."""
+        n = packed_by_width[0].shape[0]
+        out: list[np.ndarray | None] = []
+        for i in range(n):
+            best: list[np.ndarray] = []
+            for packed in packed_by_width:
+                line = packed[i]
+                total = max(1, line.size)
+                picked: list[np.ndarray] = []
+                for color, count in _cluster_counts(line, merge_tol):
+                    if len(picked) >= len(base):
+                        break                  # dama kac tonluysa o kadar yerel ton
+                    if count / total < min_share:
+                        break                  # kumeler frekansa gore sirali
+                    if np.abs(base - color).max(axis=1).min() > max_drift:
+                        continue               # hicbir dama tonuna benzemiyor
+                    picked.append(color)
+                if len(picked) > len(best):
+                    best = picked
+                if len(best) >= len(base):
+                    break                      # bu genislik yetti
+            out.append(np.array(best, dtype=np.int32) if best else None)
+        return out
+
+
+def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
+                                  margin: int = 3, low: int = 3, high: int = 14) -> int:
+    """Arka planin kendi ton referansindan ne kadar saptigini OLCUP tolerans secer.
+
+    Sabit bir tolerans ise yaramiyor: olculen render'larda kenar seridinin sapmasi
+    (%95'lik dilim) 0 ile 9 arasinda degisiyor. 1024'luk temiz bir ornekten
+    turetilen tol=3, 2048'lik gurultulu render'larda arka planin buyuk kismini
+    birakiyordu (bir gorselde 5437 opak piksel yerine 3191 olmaliydi).
+
+    Olcum YEREL ton alanina gore yapilir. Global tonlara gore olculdugunde ton
+    kaymasi gurultu sanilip tolerans sisiyordu (olculen bir gorselde 11'e cikip
+    karakterin acik renklerini riske atiyordu); yerel referansla ayni gorselde 4."""
+    if field.empty:
         return low
-    rgb = small.astype(np.int32)
-    distance = np.min([np.abs(rgb - np.array(t, dtype=np.int32)).max(axis=2) for t in tones],
-                      axis=0)
-    mask = np.zeros(small.shape[:2], dtype=bool)
+    h, w = field.distance.shape
+    mask = np.zeros((h, w), dtype=bool)
     mask[:ring, :] = mask[-ring:, :] = True
     mask[:, :ring] = mask[:, -ring:] = True
-    p95 = float(np.percentile(distance[mask], 95))
+    p95 = float(np.percentile(field.distance[mask], 95))
     return int(np.clip(round(p95) + margin, low, high))
 
 
-def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
+def background_to_alpha(small: np.ndarray, field: BackgroundToneField,
                         tol: int = 3, halo_tol_factor: float = 2.5,
                         halo_width: int = 2) -> np.ndarray:
     """Dama tonlarina yakin VE goruntu kenarina bagli pikselleri seffaf yapar.
@@ -616,19 +774,13 @@ def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
     BILINEN SINIR: karakterin uzerinde dama tonuna `tol` kadar yakin bir renk varsa
     ve o bolge kenara bagliysa, renk temelli hicbir yontem ikisini ayiramaz. Boyle
     bir durumda --bg-tol degerini dusurun."""
-    if not tones:
+    if field.empty:
         # Kenarlarda baskin bir ton yok — silinecek bir dama deseni de yok demektir.
         return np.dstack([small.astype(np.uint8),
                           np.full(small.shape[:2], 255, dtype=np.uint8)])
 
-    rgb = small.astype(np.int32)
-    strong = np.zeros(small.shape[:2], dtype=bool)
-    weak = np.zeros(small.shape[:2], dtype=bool)
-
-    for tone in tones:
-        dist = np.abs(rgb - np.array(tone, dtype=np.int32)).max(axis=2)
-        strong |= dist <= tol
-        weak |= dist <= tol * halo_tol_factor
+    strong = field.distance <= tol
+    weak = field.distance <= tol * halo_tol_factor
 
     border_seed = np.zeros_like(strong)
     border_seed[0, :] = border_seed[-1, :] = True
@@ -648,80 +800,45 @@ def background_to_alpha(small: np.ndarray, tones: list[tuple[int, int, int]],
     return np.dstack([small.astype(np.uint8), alpha])
 
 
-def enrich_tones_from_background(small: np.ndarray, tones: list[tuple[int, int, int]],
-                                 tol: int, max_drift: int = 40, rounds: int = 4,
-                                 max_tones: int = 24) -> list[tuple[int, int, int]]:
-    """Bulunan arka plandan yeni dama tonlari ogrenip taramayi tekrarlar.
-
-    Neden gerekli: bazi render'larda dama deseninin tonu goruntu boyunca kayiyor —
-    olculen bir ornekte kenardan ogrenilen tonlara 24 birim uzakta, gozle bakinca
-    apacik dama olan bir bolge opak kaliyordu. Komsuluga bakan bir yayilma bunu
-    cozmuyor, cunku damanin iki tonu zaten birbirinden ~26 birim uzak: yayilma her
-    kare sinirinda duruyor. Onun yerine tonlarin KENDISINI genisletiyoruz.
-
-    Guvenlik: yeni tonlar yalnizca kenara bagli arka plandan ogrenilir ve orijinal
-    tonlardan en fazla `max_drift` uzaklasabilir, boylece karaktere sizamaz."""
-    if not tones:
-        return tones
-    rgb = small.astype(np.int32)
-    origin = np.array(tones, dtype=np.int32)
-
-    border_seed = np.zeros(small.shape[:2], dtype=bool)
-    border_seed[0, :] = border_seed[-1, :] = True
-    border_seed[:, 0] = border_seed[:, -1] = True
-
-    current = list(tones)
-    for _ in range(rounds):
-        strong = np.zeros(small.shape[:2], dtype=bool)
-        for tone in current:
-            strong |= np.abs(rgb - np.array(tone, dtype=np.int32)).max(axis=2) <= tol
-        seeds = strong & border_seed
-        if not seeds.any():
-            break
-        background = flood_from_seeds(strong, seeds, connectivity=4)
-        if not background.any():
-            break
-
-        values, counts = np.unique(pack_rgb(small[background]), return_counts=True)
-        order = np.argsort(-counts, kind="stable")
-        learned = list(current)
-        for idx in order:
-            if len(learned) >= max_tones:
-                break
-            color = np.array(unpack_rgb(int(values[idx])), dtype=np.int32)
-            if np.abs(origin - color).max(axis=1).min() > max_drift:
-                continue                      # orijinal tonlardan cok uzaklasma
-            if any(np.abs(color - np.array(t, dtype=np.int32)).max() <= tol for t in learned):
-                continue                      # zaten kapsaniyor
-            learned.append(tuple(int(v) for v in color))
-
-        if len(learned) == len(current):
-            break
-        current = learned
-
-    return current
-
-
 # ---------------------------------------------------------------------------
 # 4) Artefakt temizligi
 # ---------------------------------------------------------------------------
 
-def remove_background_remnants(rgba: np.ndarray, tones: list[tuple[int, int, int]],
+def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
                                tol: int, share: float = 0.7) -> np.ndarray:
     """Ana silüetten kopuk VE dama renginde olan parcalari siler.
 
     Dama sinirina denk gelen bazi hucreler iki tonun arasinda bir renk aliyor ve
     esigin disinda kaliyor; geriye ince seritler kaliyor. Bunlar boyut esigini
     asabildigi icin leke temizleyicisine takilmiyorlar. Boyuta degil RENGE bakarak
-    eliyoruz: karakterin gercek parcalari dama tonunda olmaz."""
-    if not tones:
+    eliyoruz: karakterin gercek parcalari dama tonunda olmaz.
+
+    NOT: bu bir emniyet agi, cozum degil. Kalinti ana silüete DEGIYORSA (olculen
+    bir ornekte ton kaymasi karakterin kolunun altinda yatay bir serit birakiyordu)
+    burasi onu yakalayamaz — o yuzden asil is `BackgroundToneField` tarafinda.
+
+    Olcut, ONAYLANMIS arka planin renk gamutu: "bu renk, seffaf yapilmis
+    piksellerde gecen bir renge yakin mi?" Kayma iki boyutlu olabiliyor (olculen
+    bir ornekte satirin solunda tonlar 219/252 iken saginda 204/233'tu) ve
+    satir/sutun ornekleme boyle yerel bir golgeyi tam yakalayamiyor; ama o
+    golgenin komsulugu zaten silinmis oluyor, dolayisiyla dogru referans
+    bastaki iki ton degil, gercekten silinmis piksellerin renkleri.
+
+    Bu gevsek olcut yalnizca KOPUK parcalara uygulandigi icin guvenli — ana
+    silüete uygulansa karakterin gri tonlarini yerdi."""
+    if field.empty:
         return rgba
     rgba = rgba.copy()
     opaque = rgba[:, :, 3] > 0
+    if opaque.all():
+        return rgba
     labels, num = label_components(opaque, connectivity=8)
     if num <= 1:
         return rgba
 
+    confirmed = np.array([unpack_rgb(int(v))
+                          for v in np.unique(pack_rgb(rgba[:, :, :3][~opaque]))],
+                         dtype=np.int32)
     sizes = np.bincount(labels.ravel())
     main = int(np.argmax(sizes[1:])) + 1
     wide = tol * 3
@@ -730,10 +847,8 @@ def remove_background_remnants(rgba: np.ndarray, tones: list[tuple[int, int, int
             continue
         mask = labels == lbl
         colors = rgba[:, :, :3][mask].astype(np.int32)
-        near = np.zeros(len(colors), dtype=bool)
-        for tone in tones:
-            near |= np.abs(colors - np.array(tone, dtype=np.int32)).max(axis=1) <= wide
-        if near.mean() >= share:
+        near = np.abs(colors[:, None, :] - confirmed[None, :, :]).max(axis=2).min(axis=1)
+        if (near <= wide).mean() >= share:
             rgba[mask] = (0, 0, 0, 0)
     return rgba
 
@@ -1122,15 +1237,15 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         rgba = np.dstack([small, np.where(alpha_small > 127, 255, 0).astype(np.uint8)])
     else:
         tones = detect_background_tones(small)
-        tol = bg_tol if bg_tol is not None else estimate_background_tolerance(small, tones)
-        enriched = enrich_tones_from_background(small, tones, tol)
-        if len(enriched) > len(tones):
-            log(f"  dama tonlari genisletildi: {len(tones)} -> {len(enriched)}")
-            tones = enriched
+        field = BackgroundToneField(small, tones)
+        tol = bg_tol if bg_tol is not None else estimate_background_tolerance(field)
         print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones),
               f"(tolerans {tol}{'' if bg_tol is not None else ', olculerek secildi'})")
-        rgba = background_to_alpha(small, tones, tol=tol)
-        rgba = remove_background_remnants(rgba, tones, tol)
+        if field.drift > tol:
+            log(f"  ton kaymasi: goruntu boyunca en fazla {field.drift} birim — "
+                f"satir/sutun basina yerel ton kullaniliyor")
+        rgba = background_to_alpha(small, field, tol=tol)
+        rgba = remove_background_remnants(rgba, field, tol)
 
     if verify:
         if upscaled:
