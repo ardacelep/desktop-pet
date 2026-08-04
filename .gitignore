@@ -15,6 +15,12 @@ npm-debug.log*
 yarn-error.log*
 .eslintcache
 
+# Python (tools/ altındaki sprite araçları)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
 # İşletim sistemi
 .DS_Store
 Thumbs.db

@@ -14,6 +14,8 @@ npm start
 
 ## Karakter ekleme akışı
 
+Sprite'ları Gemini gibi bir modele ürettiyorsan, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
+
 1. Kendine bir dal aç:
 
    ```bash

@@ -49,7 +49,9 @@ pet/
 │       ├── walk_right_spritesheet.png
 │       └── meta.json
 ├── tools/
-│   └── check-characters.js # Karakter doğrulayıcı (npm run check)
+│   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
+│   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
+│   └── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
 ├── assets/                 # Ham/orijinal sprite dosyaları (uygulama bunları okumaz)
 └── DESKTOP_PET_PLAN.md     # Mimari plan notları
 ```
@@ -104,6 +106,43 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 Karakterin **sağa bakıyor** olması gerekir — sola yürüyüş `flip` ile üretilir. Sola bakan bir sheet çizdiyseniz `walk_right`'a `"flip": true`, `walk_left`'e `false` verin.
 
 `characters/characters.json` yalnızca ilk kurulumda hangi karakterle başlanacağını tutar; yeni karakter eklerken bu dosyaya dokunmayın.
+
+## AI ile üretilen sprite'ları hazırlama
+
+Gemini gibi modellerden gelen "pixel art" görselleri doğrudan kullanılamaz: dosya 1024×1024 gelir ama içindeki gerçek pixel art örneğin 100×100'dür (her sanal piksel ~10.24 gerçek piksellik bir blok), üstelik şeffaflık gerçek değildir — arka plana dama deseni **çizilmiştir**.
+
+[tools/pixelart_extract.py](tools/pixelart_extract.py) bunu düzeltir: ızgarayı ondalıklı hassasiyetle tespit edip görseli gerçek çözünürlüğüne indirir ve dama desenini gerçek alfa kanalına çevirir.
+
+```bash
+python3 tools/pixelart_extract.py gemini_ciktisi.png characters/kedi/idle_spritesheet.png
+```
+
+Gözle kontrol için büyütülmüş bir önizleme:
+
+```bash
+python3 tools/pixelart_extract.py girdi.png cikti.png --preview onizleme.png --preview-scale 8
+```
+
+Faydalı seçenekler:
+
+| Seçenek | Ne işe yarar |
+| --- | --- |
+| `--merge-colors 8` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar (örnek görselde 664 → 47 renk). Varsayılan kapalı |
+| `--bg-tol N` | Dama rengi toleransı (varsayılan 3). Arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
+| `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
+| `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
+
+Bağımlılık sadece `numpy` ve `pillow`:
+
+```bash
+pip3 install numpy pillow
+```
+
+Değişiklik yaparsanız regresyon testlerini çalıştırın:
+
+```bash
+python3 tools/test_pixelart_extract.py
+```
 
 ## Birlikte geliştirme
 
