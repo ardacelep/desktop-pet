@@ -38,6 +38,7 @@ KULLANIM
     python3 pixelart_extract.py girdi.png cikti.png
     python3 pixelart_extract.py girdi.png cikti.png --verbose --debug-dir ./debug
     python3 pixelart_extract.py girdi.png cikti.png --preview onizleme.png --preview-scale 8
+    python3 pixelart_extract.py girdi.png cikti.png --verify   # kayipsizligi olcup raporlar
 """
 
 from __future__ import annotations
@@ -537,6 +538,100 @@ def crop_to_content(rgba: np.ndarray, padding: int = 0) -> np.ndarray:
 # Hata ayiklama ciktilari
 # ---------------------------------------------------------------------------
 
+def cell_cores(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, inset: float = 1.5):
+    """Her hucrenin AA sinirlarindan uzak cekirdek bolgesini dolasir.
+    Donen: (i, j, core) — core: (N,3) int32."""
+    xe, ye = gx.edges(arr.shape[1]), gy.edges(arr.shape[0])
+    for i in range(gy.count):
+        y0, y1 = int(np.ceil(ye[i] + inset)), int(np.floor(ye[i + 1] - inset))
+        if y1 <= y0:
+            continue
+        for j in range(gx.count):
+            x0, x1 = int(np.ceil(xe[j] + inset)), int(np.floor(xe[j + 1] - inset))
+            if x1 <= x0:
+                continue
+            yield i, j, arr[y0:y1, x0:x1].reshape(-1, 3).astype(np.int32)
+
+
+def intra_cell_variance(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid) -> float:
+    """Hucre ici renk varyansinin agirlikli ortalamasi.
+
+    Izgara dogruysa her hucre tek bir renktir ve bu deger kaynak gurultusu
+    seviyesinde kalir. Izgara kaydiysa hucreler sinir asar ve deger patlar —
+    olculen: dogru izgarada ~12, blok boyutu tam sayiya yuvarlandiginda ~739."""
+    total, count = 0.0, 0
+    for _, _, core in cell_cores(arr, gx, gy):
+        total += float(core.var(axis=0).sum()) * len(core)
+        count += len(core)
+    return total / max(1, count)
+
+
+def verify_extraction(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid,
+                      small: np.ndarray, opaque: np.ndarray,
+                      color_tol: int = 6, conflict_tol: int = 25) -> dict:
+    """Cikarimin kayipsizligini OLCER — iddia degil, rapor.
+
+    Uc soruya cevap verir:
+      1. Izgara dogru mu?  -> hucre ici varyans, tam sayi izgarayla kiyaslamali
+      2. Her hucreye tek bir renk atanabiliyor mu?  -> secilen rengin cekirdegi
+         temsil orani
+      3. Bir hucrede GERCEKTEN iki farkli renk carpisiyor mu? -> gerçek detay
+         kaybinin tek olasi kaynagi. Arka plan hucreleri disarida birakilir."""
+    represent, conflicts = [], []
+
+    for i, j, core in cell_cores(arr, gx, gy):
+        chosen = small[i, j].astype(np.int32)
+        represent.append(float((np.abs(core - chosen).max(axis=1) <= color_tol).mean()))
+        if not opaque[i, j]:
+            continue  # arka plandaki dama sinirlari hucre asar, onemsiz
+
+        far = core[np.abs(core - chosen).max(axis=1) > conflict_tol]
+        if len(far) >= 0.25 * len(core):
+            values, counts = np.unique(pack_rgb(far), return_counts=True)
+            rival = unpack_rgb(int(values[counts.argmax()]))
+            conflicts.append((i, j, tuple(int(v) for v in chosen), rival,
+                              len(far) / len(core)))
+
+    represent = np.array(represent)
+    rounded = AxisGrid(period=round(gx.period), phase=0.0,
+                       count=int(arr.shape[1] // round(gx.period)), quality=0.0)
+    return {
+        "variance": intra_cell_variance(arr, gx, gy),
+        "variance_if_rounded": intra_cell_variance(arr, rounded, rounded),
+        "mean_representation": float(represent.mean()),
+        "cells_clean": float((represent >= 0.90).mean()),
+        "conflicts": conflicts,
+        "character_cells": int(opaque.sum()),
+    }
+
+
+def print_verification(report: dict):
+    print("\n--- DOGRULAMA ---")
+    print(f"1) Izgara:  hucre ici varyans = {report['variance']:.1f}"
+          f"   (blok tam sayiya yuvarlansaydi: {report['variance_if_rounded']:.1f})")
+    if report["variance_if_rounded"] > report["variance"] * 3:
+        print("   -> ondalikli izgara belirgin sekilde daha iyi oturuyor")
+
+    print(f"2) Atama:   secilen renk hucre cekirdeginin ortalama "
+          f"%{report['mean_representation'] * 100:.1f}'ini temsil ediyor; "
+          f"hucrelerin %{report['cells_clean'] * 100:.1f}'i >=%90 tek renk")
+
+    n = len(report["conflicts"])
+    total = report["character_cells"]
+    print(f"3) Detay kaybi: karakterin {total} hucresinden {n} tanesinde gercekten "
+          f"farkli iki renk carpisiyor")
+    if n == 0:
+        print("   -> hicbir hucrede detay kaybi yok; cikarim kaynagin izin verdigi "
+              "olcude birebir")
+    else:
+        print("   -> asagidaki hucrelerde kaynagin kendisi izgaraya uymuyor "
+              "(AI'nin hucre icine tasan cizimi):")
+        for i, j, chosen, rival, share in report["conflicts"][:8]:
+            print(f"      ({i},{j}) {chosen} vs {rival} (%{share * 100:.0f})")
+        if n > 8:
+            print(f"      ... ve {n - 8} tane daha")
+
+
 def dump_grid_overlay(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, path: str):
     """Tespit edilen izgarayi orijinal gorselin uzerine cizer — gozle dogrulamanin
     en hizli yolu, cizgiler blok kenarlarina oturmuyorsa tespit yanlistir."""
@@ -573,15 +668,17 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             preview_scale: int = 8, bg_tol: int = 3, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
-            cleanup: bool = True) -> Image.Image:
+            cleanup: bool = True, verify: bool = False) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
     if real_alpha is not None:
         log("  not: dosyada gercek alfa kanali var, dama tespiti yerine o kullanilacak")
 
+    upscaled = not looks_already_native(arr)
+
     # 1) izgara
-    if looks_already_native(arr):
+    if not upscaled:
         print("Gorsel zaten native cozunurlukte gorunuyor — izgara indirgeme atlaniyor.")
         gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
         gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
@@ -622,6 +719,13 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         tones = detect_background_tones(small)
         print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones))
         rgba = background_to_alpha(small, tones, tol=bg_tol)
+
+    if verify:
+        if upscaled:
+            print_verification(verify_extraction(arr, gx, gy, small, rgba[:, :, 3] > 0))
+        else:
+            print("\n--- DOGRULAMA ---\nGorsel zaten native; indirgeme yapilmadigi icin "
+                  "kayip da soz konusu degil.")
 
     opaque_before = int((rgba[:, :, 3] > 0).sum())
     if debug_dir:
@@ -685,6 +789,9 @@ def main(argv=None):
                         help="Leke/delik/tek-piksel temizligini atlar — ham cikarim. "
                              "Temizlik gercek bir detayi yediginde bunu kullanin.")
     parser.add_argument("--debug-dir", help="Ara adimlari bu klasore yazar (izgara katmani dahil)")
+    parser.add_argument("--verify", action="store_true",
+                        help="Cikarimin kayipsizligini olcup raporlar: izgara oturmasi, "
+                             "hucre basina renk kesinligi ve gercek detay kaybi sayisi.")
     parser.add_argument("-v", "--verbose", action="store_true", help="Ayrintili tani ciktisi")
     args = parser.parse_args(argv)
 
@@ -694,7 +801,7 @@ def main(argv=None):
                 bg_tol=args.bg_tol, speck_size=args.speck_size,
                 center_ratio=args.center_ratio, debug_dir=args.debug_dir,
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
-                cleanup=not args.no_cleanup)
+                cleanup=not args.no_cleanup, verify=args.verify)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1

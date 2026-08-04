@@ -130,7 +130,18 @@ Faydalı seçenekler:
 | `--merge-colors 8` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar (örnek görselde 664 → 47 renk). Varsayılan kapalı |
 | `--bg-tol N` | Dama rengi toleransı (varsayılan 3). Arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
+| `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
+
+### Kayıpsızlığı doğrulama
+
+Sonuca güvenmek yerine ölçebilirsiniz:
+
+```bash
+python3 tools/pixelart_extract.py girdi.png cikti.png --verify
+```
+
+Üç soruya cevap verir: ızgara gerçekten oturuyor mu (hücre içi varyans, tam sayıya yuvarlanmış ızgarayla karşılaştırmalı), her hücreye tek bir renk atanabiliyor mu, ve bir hücrede *gerçekten* farklı iki renk çarpışıyor mu. Sonuncusu gerçek detay kaybının tek olası kaynağıdır; 0 çıkması çıkarımın kaynağın izin verdiği ölçüde birebir olduğu anlamına gelir.
 
 Bağımlılık sadece `numpy` ve `pillow`:
 
