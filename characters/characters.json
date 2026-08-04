@@ -1,12 +1,4 @@
 {
-  "active": "karakter1",
-  "list": [
-    {
-      "id": "karakter1",
-      "displayName": "Arkadaş 1",
-      "folder": "karakter1",
-      "nativeFrameSize": 88,
-      "displayHeight": 88
-    }
-  ]
+  "_comment": "Karakterler klasörden otomatik keşfedilir (meta.json içeren her alt klasör). Burada sadece ilk kurulumda hangi karakterle başlanacağı yazar; yeni karakter eklerken bu dosyaya dokunmanıza gerek yok.",
+  "default": "karakter1"
 }

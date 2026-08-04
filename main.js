@@ -21,21 +21,64 @@ let petWindow = null;
 /** @type {Tray | null} */
 let tray = null;
 
-function readCharacterRegistry() {
-  const raw = fs.readFileSync(path.join(CHARACTERS_DIR, 'characters.json'), 'utf8');
-  return JSON.parse(raw);
+/**
+ * Karakterleri klasörden keşfeder: meta.json içeren her alt klasör bir karakterdir.
+ * Merkezi bir kayıt defteri tutmuyoruz — böylece yeni karakter eklemek ortak bir
+ * dosyaya dokunmayı gerektirmiyor ve paralel katkılarda merge conflict çıkmıyor.
+ */
+function discoverCharacters() {
+  const dirs = fs
+    .readdirSync(CHARACTERS_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .filter((d) => fs.existsSync(path.join(CHARACTERS_DIR, d.name, 'meta.json')));
+
+  const list = [];
+  for (const dir of dirs) {
+    try {
+      const meta = JSON.parse(
+        fs.readFileSync(path.join(CHARACTERS_DIR, dir.name, 'meta.json'), 'utf8')
+      );
+      const nativeFrameSize = meta.nativeFrameSize ?? meta.idle?.frameSize ?? 88;
+      list.push({
+        id: dir.name,
+        folder: dir.name,
+        displayName: meta.displayName || dir.name,
+        nativeFrameSize,
+        displayHeight: meta.displayHeight ?? nativeFrameSize,
+        meta
+      });
+    } catch (err) {
+      // Bozuk bir meta.json tüm uygulamayı düşürmesin, sadece o karakter atlansın
+      console.error(`[pet] "${dir.name}" karakteri atlandı: ${err.message}`);
+    }
+  }
+
+  // Menü sırası her makinede aynı olsun diye deterministik sıralama
+  list.sort((a, b) => a.displayName.localeCompare(b.displayName, 'tr'));
+  return list;
+}
+
+/** Yeni kurulumda hangi karakterle başlanacağı. Nadiren değişir. */
+function readDefaultCharacterId() {
+  try {
+    const raw = fs.readFileSync(path.join(CHARACTERS_DIR, 'characters.json'), 'utf8');
+    return JSON.parse(raw).default ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveActiveCharacter() {
-  const registry = readCharacterRegistry();
-  const wantedId = store.get('activeCharacterId') || registry.active;
-  const entry = registry.list.find((c) => c.id === wantedId) || registry.list[0];
-  const meta = JSON.parse(
-    fs.readFileSync(path.join(CHARACTERS_DIR, entry.folder, 'meta.json'), 'utf8')
-  );
+  const list = discoverCharacters();
+  if (list.length === 0) {
+    throw new Error('characters/ altında meta.json içeren hiçbir karakter klasörü bulunamadı.');
+  }
+
+  const wantedId = store.get('activeCharacterId') || readDefaultCharacterId();
+  const entry = list.find((c) => c.id === wantedId) || list[0];
+
   return {
     ...entry,
-    meta,
     // renderer/index.html'e göreli — file:// ve asar içinde de çalışır
     baseUrl: `../characters/${entry.folder}/`
   };
@@ -105,13 +148,13 @@ function persistPosition() {
 }
 
 function buildMenuTemplate() {
-  const registry = readCharacterRegistry();
-  const activeId = store.get('activeCharacterId') || registry.active;
+  const list = discoverCharacters();
+  const activeId = store.get('activeCharacterId') || readDefaultCharacterId() || list[0]?.id;
 
   return [
     {
       label: 'Karakter Değiştir',
-      submenu: registry.list.map((c) => ({
+      submenu: list.map((c) => ({
         label: c.displayName,
         type: 'radio',
         checked: c.id === activeId,

@@ -1,4 +1,8 @@
 {
+  "displayName": "Arkadaş 1",
+  "nativeFrameSize": 88,
+  "displayHeight": 88,
+
   "idle": {
     "file": "idle_spritesheet.png",
     "frameSize": 88,
@@ -18,6 +22,7 @@
     "frameDuration": 120,
     "flip": true
   },
+
   "walkSpeed": 42,
   "lines": [
     "Selam! 👋",

@@ -43,11 +43,13 @@ pet/
 │   ├── speech-bubble.js    # Konuşma balonu UI'ı
 │   └── pet.js              # Durum makinesi, davranış, etkileşimler
 ├── characters/
-│   ├── characters.json     # Karakter kayıt defteri
+│   ├── characters.json     # Sadece varsayılan karakter (nadiren değişir)
 │   └── karakter1/
 │       ├── idle_spritesheet.png
 │       ├── walk_right_spritesheet.png
 │       └── meta.json
+├── tools/
+│   └── check-characters.js # Karakter doğrulayıcı (npm run check)
 ├── assets/                 # Ham/orijinal sprite dosyaları (uygulama bunları okumaz)
 └── DESKTOP_PET_PLAN.md     # Mimari plan notları
 ```
@@ -56,30 +58,31 @@ Ana süreç yalnızca pencereyi konumlandırır; pet'in nerede olduğu ve ne yap
 
 ## Yeni karakter ekleme
 
+**Karakterler klasörden otomatik keşfedilir** — `characters/` altında `meta.json` içeren her klasör bir karakterdir. Ortak bir kayıt dosyasına dokunmanız gerekmez, yani iki kişi aynı anda karakter eklerken çakışma yaşamaz.
+
 1. `characters/<karakter-adi>/` klasörü aç, sprite sheet'leri içine koy.
    Sheet'ler **yatay** olmalı: kareler yan yana, her kare kare (kxk) ve arka plan şeffaf.
 2. Aynı klasöre bir `meta.json` yaz:
 
 ```json
 {
+  "displayName": "Arkadaş 2",
+  "nativeFrameSize": 88,
+  "displayHeight": 88,
+
   "idle":       { "file": "idle_spritesheet.png",       "frameSize": 88, "frameCount": 4, "frameDuration": 500 },
   "walk_right": { "file": "walk_right_spritesheet.png", "frameSize": 88, "frameCount": 7, "frameDuration": 120 },
   "walk_left":  { "file": "walk_right_spritesheet.png", "frameSize": 88, "frameCount": 7, "frameDuration": 120, "flip": true },
+
   "walkSpeed": 42,
   "lines": ["Selam!", "Bir mola versene."]
 }
 ```
 
-3. `characters/characters.json` içindeki `list`'e kaydı ekle:
+3. Doğrula:
 
-```json
-{
-  "id": "karakter2",
-  "displayName": "Arkadaş 2",
-  "folder": "karakter2",
-  "nativeFrameSize": 88,
-  "displayHeight": 88
-}
+```bash
+npm run check
 ```
 
 Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik görünür.
@@ -88,6 +91,7 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 
 | Alan | Açıklama |
 | --- | --- |
+| `displayName` | Menüde görünen ad. Yoksa klasör adı kullanılır |
 | `nativeFrameSize` | Sprite dosyasındaki kare boyutu (piksel) |
 | `displayHeight` | Ekranda görünecek boy. Farklı çözünürlüklü karakterleri aynı boyda göstermek için |
 | `flip` | `true` ise kare çizilirken yatay aynalanır — sola yürüyüş için ayrı dosya tutmaya gerek yok |
@@ -96,6 +100,14 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 | `lines` | Tıklandığında rastgele seçilen cümleler |
 
 `displayHeight` ile `nativeFrameSize` eşit olduğunda piksel sanatı en net görünür; ara ölçekler (ör. 88 → 80) bulanıklaştırır. Ölçek gerekiyorsa tam katlar (176, 44) tercih edin.
+
+Karakterin **sağa bakıyor** olması gerekir — sola yürüyüş `flip` ile üretilir. Sola bakan bir sheet çizdiyseniz `walk_right`'a `"flip": true`, `walk_left`'e `false` verin.
+
+`characters/characters.json` yalnızca ilk kurulumda hangi karakterle başlanacağını tutar; yeni karakter eklerken bu dosyaya dokunmayın.
+
+## Birlikte geliştirme
+
+Karakter eklemek kod değiştirmeyi gerektirmediği için art ve kod tarafı birbirine karışmaz. Ayrıntılar ve dal/PR akışı için [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Ayarların saklandığı yer
 
