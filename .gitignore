@@ -1,0 +1,30 @@
+# Bağımlılıklar
+node_modules/
+
+# Build çıktıları
+dist/
+out/
+*.dmg
+*.exe
+*.zip
+*.blockmap
+
+# Electron / npm
+.npm/
+npm-debug.log*
+yarn-error.log*
+.eslintcache
+
+# İşletim sistemi
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editör
+.vscode/
+.idea/
+*.swp
+
+# Yerel ortam
+.env
+.env.local

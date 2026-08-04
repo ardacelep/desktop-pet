@@ -1,0 +1,12 @@
+{
+  "active": "karakter1",
+  "list": [
+    {
+      "id": "karakter1",
+      "displayName": "Arkadaş 1",
+      "folder": "karakter1",
+      "nativeFrameSize": 88,
+      "displayHeight": 88
+    }
+  ]
+}
