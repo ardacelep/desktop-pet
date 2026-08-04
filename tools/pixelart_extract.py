@@ -525,53 +525,6 @@ def downsample_by_mode(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid,
 # 3) Dama deseni -> gercek alfa
 # ---------------------------------------------------------------------------
 
-def detect_background_tones(small: np.ndarray, ring: int = 2, per_side: int = 3,
-                            merge_tol: int = 4, min_share: float = 0.15) -> list[tuple[int, int, int]]:
-    """Gorselin kenar seridinden dama deseninin GERCEK tonlarini ogrenir.
-
-    Sabit "acik gri" varsayimi yerine ornekleme yapiyoruz; boylece pembe, mavi, bej
-    ya da koyu temali dama desenleri de calisiyor.
-
-    Her kenar AYRI ornekleniyor: bazi render'larda dama tuval boyunca renk kaydiriyor
-    (olculen bir ornekte ust kenarda tonlar 229/253 iken alt bolgede 203/243'e
-    iniyordu). Tum kenari birlikte sayip en sik birkac rengi almak, azinlikta kalan
-    kenarin tonlarini eliyor ve o bolgede arka plan silinmeden kaliyordu."""
-    h, w = small.shape[:2]
-    sides = {
-        "ust": small[:ring, :],
-        "alt": small[-ring:, :],
-        "sol": small[:, :ring],
-        "sag": small[:, -ring:],
-    }
-
-    tones: list[tuple[int, int, int]] = []
-    for region in sides.values():
-        values, counts = np.unique(pack_rgb(region), return_counts=True)
-        total = counts.sum()
-        for idx in np.argsort(-counts, kind="stable")[:per_side]:
-            # Karakter kenara dayaniyorsa onun rengi de bu kenarda gorunur; dama
-            # deseni kenarin buyuk kismini kaplamak zorunda oldugu icin kucuk
-            # paylari eliyoruz.
-            if counts[idx] / total < min_share:
-                break
-            color = unpack_rgb(int(values[idx]))
-            if any(max(abs(a - b) for a, b in zip(color, t)) <= merge_tol for t in tones):
-                continue
-            tones.append(color)
-    return tones
-
-
-def dilate(mask: np.ndarray) -> np.ndarray:
-    """3x3 (8-yonlu) genisletme."""
-    out = mask.copy()
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            out |= np.roll(np.roll(mask, dy, axis=0), dx, axis=1)
-    out[0, :] |= mask[0, :]
-    out[-1, :] |= mask[-1, :]
-    return out
-
-
 def _cluster_counts(packed: np.ndarray, merge_tol: int) -> list[tuple[np.ndarray, int]]:
     """Paketlenmis renkleri frekansa gore kumeler; birbirine `merge_tol` kadar yakin
     renkler tek kumede toplanir ve sayilari birlesir.
@@ -589,7 +542,58 @@ def _cluster_counts(packed: np.ndarray, merge_tol: int) -> list[tuple[np.ndarray
                 break
         else:
             clusters.append((color, int(counts[idx])))
+    # Birlesme sonrasi toplamlar degistigi icin yeniden siralaniyor: cagiranlar
+    # "en kalabalik kume once" varsayimina dayanip pay esiginde donguyu kiriyor.
+    clusters.sort(key=lambda c: -c[1])
     return clusters
+
+
+def detect_background_tones(small: np.ndarray, ring: int = 2, per_side: int = 3,
+                            merge_tol: int = 4, min_share: float = 0.15) -> list[tuple[int, int, int]]:
+    """Gorselin kenar seridinden dama deseninin GERCEK tonlarini ogrenir.
+
+    Sabit "acik gri" varsayimi yerine ornekleme yapiyoruz; boylece pembe, mavi, bej
+    ya da koyu temali dama desenleri de calisiyor.
+
+    Her kenar AYRI ornekleniyor: bazi render'larda dama tuval boyunca renk kaydiriyor
+    (olculen bir ornekte ust kenarda tonlar 229/253 iken alt bolgede 203/243'e
+    iniyordu). Tum kenari birlikte sayip en sik birkac rengi almak, azinlikta kalan
+    kenarin tonlarini eliyor ve o bolgede arka plan silinmeden kaliyordu.
+
+    Sayim BIREBIR renklere degil, `merge_tol` icinde kumelenmis renklere bakiyor.
+    Sebebi olculdu: kanal basina bagimsiz +/-1 gurultu tek bir dama tonunu
+    (252,253,253), (252,252,253), (252,252,254)... gibi onlarca ayri renge
+    dagitiyor. Birebir sayimda hicbiri %15 paya ulasamiyor ve fonksiyon BOS
+    liste donuyordu — yani arka plan hic silinmiyordu."""
+    h, w = small.shape[:2]
+    sides = (small[:ring, :], small[-ring:, :], small[:, :ring], small[:, -ring:])
+
+    tones: list[tuple[int, int, int]] = []
+    for region in sides:
+        clusters = _cluster_counts(pack_rgb(region), merge_tol)
+        total = max(1, region.shape[0] * region.shape[1])
+        for color, count in clusters[:per_side]:
+            # Karakter kenara dayaniyorsa onun rengi de bu kenarda gorunur; dama
+            # deseni kenarin buyuk kismini kaplamak zorunda oldugu icin kucuk
+            # paylari eliyoruz.
+            if count / total < min_share:
+                break
+            renk = tuple(int(v) for v in color)
+            if any(max(abs(a - b) for a, b in zip(renk, t)) <= merge_tol for t in tones):
+                continue
+            tones.append(renk)
+    return tones
+
+
+def dilate(mask: np.ndarray) -> np.ndarray:
+    """3x3 (8-yonlu) genisletme."""
+    out = mask.copy()
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            out |= np.roll(np.roll(mask, dy, axis=0), dx, axis=1)
+    out[0, :] |= mask[0, :]
+    out[-1, :] |= mask[-1, :]
+    return out
 
 
 def _checker_square(small: np.ndarray, merge_tol: int = 6, default: int = 3) -> int:
@@ -1294,6 +1298,11 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         tones = detect_background_tones(small)
         field: BackgroundToneField | None = BackgroundToneField(small, tones)
         tol = bg_tol if bg_tol is not None else estimate_background_tolerance(field)
+        if not tones:
+            print("UYARI: kenar seridinde baskin bir dama tonu bulunamadi — arka plan "
+                  "SILINMEDEN birakiliyor. Gorselin arka plani gercekten duz/desensiz "
+                  "degilse bu bir tespit hatasidir; --debug-dir ile 2_native.png'ye bakin.",
+                  file=sys.stderr)
         print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones),
               f"(tolerans {tol}{'' if bg_tol is not None else ', olculerek secildi'})")
         if field.drift > tol:

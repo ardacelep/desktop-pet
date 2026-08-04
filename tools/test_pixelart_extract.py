@@ -331,6 +331,38 @@ def test_local_tones_not_matched_one_to_one():
           f"en kotu sapma {worst} (tek tek esleme yapilsaydi ~26 olurdu)")
 
 
+def test_noisy_checker_tone_detection():
+    """Kanal basina BAGIMSIZ +/-1 gurultu tek bir dama tonunu (252,253,253),
+    (252,252,253), (252,252,254)... gibi onlarca ayri renge dagitiyor. Birebir
+    renk sayan tespit hicbirini %15 paya ulastiramayip BOS ton listesi donuyor
+    ve arka plan hic silinmiyordu — hem de sessizce."""
+    rng = np.random.default_rng(21)
+    sprite, mask = make_sprite(60, 60, seed=17)
+    rendered = render_like_gemini(sprite, mask, 960).astype(np.int16)
+    background = ~np.repeat(np.repeat(mask, 16, 0), 16, 1)
+    rendered = np.where(background[..., None],
+                        np.clip(rendered + rng.integers(-1, 2, rendered.shape), 0, 255),
+                        rendered).astype(np.uint8)
+
+    small = px.downsample_by_mode(rendered, *px.detect_grid(rendered))
+    tones = px.detect_background_tones(small)
+    check("gurultulu dama: ton tespiti bos donmedi", len(tones) > 0,
+          "hicbir ton bulunamadi — arka plan silinmeden kalirdi")
+    if not tones:
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "n.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(rendered).save(src)
+        px.extract(src, dst, no_crop=True, cleanup=False)
+        out = np.array(Image.open(dst))
+    if out.shape[:2] != mask.shape:
+        check("gurultulu dama: cozunurluk", False, f"{out.shape[1]}x{out.shape[0]}")
+        return
+    kalan = int(((out[:, :, 3] > 0) & ~mask).sum())
+    check("gurultulu dama: arka plan silindi", kalan <= 2, f"{kalan} piksel kaldi")
+
+
 def test_lattice_covers_full_canvas():
     """Faz ne olursa olsun kafes tuvalin tamamini kaplamali. Aksi halde faz arayan
     optimizasyon kapsamayi kucultmeyi 'iyilesme' saniyordu."""
@@ -522,6 +554,7 @@ if __name__ == "__main__":
         test_phase_offset_grid,
         test_gradient_checkerboard,
         test_tone_band_touching_character,
+        test_noisy_checker_tone_detection,
         test_local_tones_not_matched_one_to_one,
         test_lattice_covers_full_canvas,
         test_already_native,

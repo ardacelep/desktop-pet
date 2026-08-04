@@ -51,8 +51,10 @@ pet/
 ├── tools/
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
+│   ├── split_sheet.py            # Sheet'i tek tek karelere böler
 │   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar
 │   ├── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
+│   ├── test_split_sheet.py       # Bölücünün regresyon testleri
 │   └── test_pack_sheet.py        # Hizalayıcının regresyon testleri
 ├── assets/                 # Ham/orijinal sprite dosyaları (uygulama bunları okumaz)
 └── DESKTOP_PET_PLAN.md     # Mimari plan notları
@@ -140,11 +142,38 @@ Faydalı seçenekler:
 | --- | --- |
 | `--merge-colors N` | AI render'ındaki piksel gürültüsünü baskın tonlara yaslar. Varsayılan kapalı; güvenli değeri `--verify` söyler |
 | `--bg-tol N` | Dama rengi toleransı. Varsayılan olarak görselin kenarından **ölçülerek** seçilir; arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
-| `--no-crop` | Kenar boşluklarını kırpmaz. **Aynı karakterin birden fazla karesini çıkarırken şart** — aksi halde her kare kendi içeriğine göre kırpılır ve animasyonda karakter zıplar |
+| `--no-crop` | Kenar boşluklarını kırpmaz. Kareleri **elle** yan yana dizecekseniz şart; `pack_sheet.py` kullanıyorsanız gerekmez (o zaten içeriğe göre hizalar) |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
 | `--fill-gaps N` | Silüetin içinde kapalı kalmış, dama renginde, en fazla N piksellik adacıkları şeffaf yapar. Varsayılan kapalı — [aşağıya bakın](#kolla-gövde-arasındaki-kapalı-boşluklar) |
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
+
+### Gemini tek bir sheet ürettiyse
+
+Animasyonu tek bir spritesheet olarak ürettirdiyseniz sıra şu — ve **bu sıra önemli**:
+
+```bash
+python3 tools/pixelart_extract.py sheet_ham.png sheet_native.png
+```
+
+```bash
+python3 tools/split_sheet.py sheet_native.png -o kareler/ --frames 7 --preview bolme.png
+```
+
+```bash
+python3 tools/pack_sheet.py kareler/kare_*.png -o walk_right_spritesheet.png --gif onizleme.gif
+```
+
+Sezgisel olan sıra (önce böl, sonra her kareyi ayrı çıkar) **yanlış**: ızgara tespiti her kare için bağımsız çalışır ve bir kare 100×100, diğeri 97×97 tespit edilebilir. O noktada kareler farklı piksel ölçeğinde olur ve düzeltmenin tek yolu ölçeklemektir — yani piksel sanatını bozmaktır. Pixel art ızgarası sheet'in tamamında tek bir kafestir; bir kez ölçülünce tüm kareler garantili aynı ölçekte çıkar. Ayrıca dar bir şeritte ızgara tespiti tüm görüntüdekinden daha az veriyle çalışır.
+
+[tools/split_sheet.py](tools/split_sheet.py) kareleri **tamamen boş satır/sütun bantlarından** ayırır — çıkarım sonrası arka plan gerçekten şeffaf olduğu için bu güvenilir bir sinyaldir. 1×N, N×1 ve R×C düzenlerinin hepsi aynı kodla çalışır.
+
+| Seçenek | Ne işe yarar |
+| --- | --- |
+| `--frames N` | Beklenen kare sayısını doğrular; tutmazsa hata verir (sessizce yanlış bölmez) |
+| `--rows R --cols C` | Kareler birbirine değiyorsa eşit bölme — tam ortalaması gerekmez, `pack_sheet` yeniden hizalar |
+| `--min-gap N` | Ayırıcı sayılan en kısa boş şerit (varsayılan 1 piksel) |
+| `--preview` | Bulunan kare sınırlarını kırmızı çerçeveyle çizer — bölme yanlışsa hemen görünür |
 
 ### Animasyon karelerini sprite sheet'e dizme
 
@@ -244,7 +273,7 @@ pip3 install numpy pillow
 Değişiklik yaparsanız regresyon testlerini çalıştırın:
 
 ```bash
-python3 tools/test_pixelart_extract.py && python3 tools/test_pack_sheet.py
+npm run test:tools
 ```
 
 ## Birlikte geliştirme
