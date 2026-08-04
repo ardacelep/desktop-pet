@@ -14,7 +14,7 @@ npm start
 
 ## Karakter ekleme akışı
 
-Sprite'ları Gemini gibi bir modele ürettiyorsan, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
+Sprite'ları Gemini'ye ürettireceksen prompt'lar [PROMPTS.md](PROMPTS.md) içinde. Ürettiysen, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
 
 Animasyon karelerini **elle yan yana dizme.** Her kare ayrı bir üretim olduğu için karakter tuval içinde farklı yerde durur; elle dizersen animasyon titrer. [tools/pack_sheet.py](tools/pack_sheet.py) kareleri ayak çizgisine ve gövdeye göre hizalar, ortak kare kutuya oturtur ve `meta.json` bloğunu basar:
 

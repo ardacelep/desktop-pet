@@ -148,6 +148,8 @@ Faydalı seçenekler:
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
 
+Gemini'ye ne söyleyeceğiniz [PROMPTS.md](PROMPTS.md) içinde — hangi kısıtın gerçekten kritik olduğu ve hangisini araçların zaten hallettiği ölçümle ayrılmış durumda.
+
 ### Gemini tek bir sheet ürettiyse
 
 Animasyonu tek bir spritesheet olarak ürettirdiyseniz sıra şu — ve **bu sıra önemli**:
