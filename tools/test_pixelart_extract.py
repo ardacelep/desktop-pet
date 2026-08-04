@@ -424,6 +424,47 @@ def test_merge_preserves_edges():
     check("merge: yuksek kontrastli gecis korunuyor", contrast >= 180, f"{contrast}")
 
 
+def test_fill_holes_keeps_source_color():
+    """Delik doldurma renk UYDURMAMALI. Onceki surum komsularin ortalamasini
+    yaziyordu ve olculen bir ornekte beyaz (255,255,255) bir ayakkabi pikselini
+    (115,115,117) ile boyuyordu — kaynakta boyle bir renk yok."""
+    rgba = np.zeros((7, 7, 4), np.uint8)
+    rgba[:, :] = (10, 20, 30, 255)
+    rgba[3, 3] = (200, 50, 60, 0)          # ic delik; RGB hala kaynaktaki deger
+    filled = px.fill_interior_holes(rgba.copy(), max_size=4)
+    check("delik doldurma: alfa geri acildi", filled[3, 3, 3] == 255)
+    check("delik doldurma: kaynak rengi korundu",
+          tuple(filled[3, 3, :3]) == (200, 50, 60), f"{tuple(filled[3,3,:3])}")
+
+
+def test_open_enclosed_gaps():
+    """Kolla govde arasinda kalan, dama renginde kucuk adaciklar acilabilmeli;
+    ama daha buyuk bir acik renkli parcanin ucu olan adaciklar (ayakkabinin beyaz
+    tabani gibi) korunmali."""
+    small = np.zeros((15, 15, 3), np.uint8)
+    small[:, :] = (30, 30, 30)
+    small[7:10, 7] = (225, 225, 225)       # yalitik bosluk — acilmali
+    small[7:9, 11] = (225, 225, 225)       # ayni renkte capraz komsusu var —
+    small[9, 12] = (225, 225, 225)         # ikisi de korunmali
+    field = px.BackgroundToneField(small, [(225, 225, 225)])
+    rgba = np.dstack([small, np.full((15, 15), 255, np.uint8)])
+
+    opened, silinen = px.open_enclosed_gaps(rgba.copy(), field, tol=3, max_size=4)
+    check("bosluk: yalitik adacik acildi", (opened[7:10, 7, 3] == 0).all(),
+          f"{opened[7:10,7,3].tolist()}")
+    check("bosluk: ayni renkte komsusu olan adacik korundu",
+          (opened[7:9, 11, 3] == 255).all() and opened[9, 12, 3] == 255)
+    check("bosluk: rapor tek adacik iceriyor", len(silinen) == 1, f"{silinen}")
+
+    kucuk, _ = px.open_enclosed_gaps(rgba.copy(), field, tol=3, max_size=2)
+    check("bosluk: boyut siniri asilirsa dokunulmuyor",
+          (kucuk[7:10, 7, 3] == 255).all())
+
+    kapali, bos = px.open_enclosed_gaps(rgba.copy(), field, tol=3, max_size=0)
+    check("bosluk: varsayilan (0) hicbir sey yapmiyor",
+          (kapali[:, :, 3] == 255).all() and bos == [])
+
+
 def test_helpers():
     """Yardimci fonksiyonlarin birim testleri."""
     mask = np.zeros((5, 5), bool)
@@ -487,6 +528,8 @@ if __name__ == "__main__":
         test_cleanup_removes_specks,
         test_noise_floor_measurement,
         test_merge_preserves_edges,
+        test_fill_holes_keeps_source_color,
+        test_open_enclosed_gaps,
         test_helpers,
     ]
     for fn in tests:

@@ -140,6 +140,7 @@ Faydalı seçenekler:
 | `--bg-tol N` | Dama rengi toleransı. Varsayılan olarak görselin kenarından **ölçülerek** seçilir; arka plan kaldıysa artırın, karakterin açık renkleri yeniyorsa azaltın |
 | `--no-crop` | Kenar boşluklarını kırpmaz. **Aynı karakterin birden fazla karesini çıkarırken şart** — aksi halde her kare kendi içeriğine göre kırpılır ve animasyonda karakter zıplar |
 | `--no-cleanup` | Leke/delik temizliğini atlar — temizlik gerçek bir detayı yerse |
+| `--fill-gaps N` | Silüetin içinde kapalı kalmış, dama renginde, en fazla N piksellik adacıkları şeffaf yapar. Varsayılan kapalı — [aşağıya bakın](#kolla-gövde-arasındaki-kapalı-boşluklar) |
 | `--verify` | Çıkarımın kayıpsızlığını ölçüp raporlar (aşağıya bakın) |
 | `--debug-dir ./debug` | Ara adımları yazar; `1_izgara.png` tespit edilen ızgarayı orijinalin üstüne çizer, tespit yanlışsa hemen görülür |
 
@@ -154,6 +155,30 @@ python3 tools/pixelart_extract.py girdi.png cikti.png --verify
 Dört şey raporlar: ızgara gerçekten oturuyor mu (hücre içi varyans, tam sayıya yuvarlanmış ızgarayla karşılaştırmalı), her hücreye tek bir renk atanabiliyor mu, bir hücrede *gerçekten* farklı iki renk çarpışıyor mu, ve kaynağın gürültü tabanı ne kadar.
 
 Üçüncü madde gerçek detay kaybının tek olası kaynağıdır; 0 çıkması çıkarımın kaynağın izin verdiği ölçüde birebir olduğu anlamına gelir.
+
+### Kolla gövde arasındaki kapalı boşluklar
+
+AI bazen kolla gövde arasında 1-3 piksellik bir boşluk bırakır. Boşluk dama renginde, ama **konturun içinde tamamen kapalı** kaldığı için kenardan gelen flood-fill oraya ulaşamaz; ekranda gri bir leke olarak kalır. Boşluk dama karesinden küçük olduğu için içinde desen de görünmez, yalnızca tek bir ton vardır.
+
+`--fill-gaps N` bunu açar ama **varsayılan olarak kapalı, çünkü güvenli bir şekilde otomatikleştirilemiyor.** Ölçülen karakterlerde göz akı `254-255`, damanın açık tonu `253` — aynı renk, ve ikisi de silüetin içinde kapalı birer adacık. Denenen ve yetersiz kalan ayırt ediciler:
+
+| Ölçüt | Neden yetmiyor |
+| --- | --- |
+| Dama kafesinin geometrisi | Dama, native piksel ızgarasına oturmuyor — kaynak çözünürlükte çizildiği için periyodu hücre boyutunun tam katı değil. Ölçülen uyum %52, yani şansa eşit |
+| Adacık boyutu | Ölçülen bir görselde gerçek boşluk 4 piksel, göz akının bir parçası da 4 piksel |
+| Komşuların koyuluğu | Boşlukların bir kısmı tene komşu, konturla çevrelenmiş değil |
+
+Uygulanan tek ek güvence: adacığın **kendi rengine yakın bir opak komşusu varsa** dokunulmuyor — o zaman daha büyük bir açık renkli parçanın ucudur (ayakkabının beyaz tabanı gibi), gerçek bir boşluk değil.
+
+Doğru kullanım, önce flag'siz sonra flag'li çalıştırıp ikisini karşılaştırmak:
+
+```bash
+python3 tools/pixelart_extract.py girdi.png cikti.png --fill-gaps 4 --preview onizleme.png
+```
+
+Silinen her adacık koordinatıyla raporlanır. Ölçülen sonuç: bir karakterde tam olarak istenen iki boşluk açıldı ve başka hiçbir şey bozulmadı; iki karakterde ise göz akının bir pikseli de silindi. Yani bu, karakter başına gözle onaylanacak bir adım.
+
+Boşluk bırakmaması için Gemini'ye talimat vermek işe yarar ama tek başına yetmez: model her seferinde uymaz ve farklı pozlarda (kol gövdeden uzakta) yeni boşluklar çıkar. İyi haber şu ki **büyük boşluk kolay** — dama deseni görünür hale geldiği ve dışarıyla bağlantısı olduğu için script onu zaten temizler. Zor olan tam olarak bu 1-3 piksellik kapalı cep.
 
 ### Kaynak gürültüsü ve palet
 

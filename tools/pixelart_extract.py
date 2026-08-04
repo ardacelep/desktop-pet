@@ -869,9 +869,15 @@ def remove_detached_specks(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
 
 
 def fill_interior_holes(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
-    """Karakterin icinde yanlislikla seffaf kalmis kucuk delikleri komsu renklerin
-    ortalamasiyla doldurur. 4-yonlu baglanti kullanilir: capraz bir noktadan disa
-    'sizan' bosluklar aksi halde kenara bagli sayilip doldurulmadan kaliyordu."""
+    """Karakterin icinde yanlislikla seffaf kalmis kucuk delikleri KENDI orijinal
+    rengiyle geri acar. 4-yonlu baglanti kullanilir: capraz bir noktadan disa
+    'sizan' bosluklar aksi halde kenara bagli sayilip doldurulmadan kaliyordu.
+
+    Onceki surum komsu renklerin ORTALAMASINI yaziyordu; bu, script'in "hicbir
+    rengi uydurmam" sozunu bozuyordu — olculen bir ornekte beyaz (255,255,255)
+    bir ayakkabi pikseli (115,115,117) ile boyaniyordu, ki bu renk kaynakta
+    hicbir yerde yok. Seffaf piksellerin RGB'si zaten kaynaktaki degeri
+    tasiyor, dolayisiyla dogru doldurma sadece alfayi geri acmaktir."""
     rgba = rgba.copy()
     transparent = rgba[:, :, 3] == 0
     labels, num = label_components(transparent, connectivity=4)
@@ -886,17 +892,63 @@ def fill_interior_holes(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
     for lbl in range(1, num + 1):
         if lbl in border or sizes[lbl] > max_size:
             continue
-        ys, xs = np.where(labels == lbl)
-        neighbors = []
-        for y, x in zip(ys, xs):
-            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                ny, nx = y + dy, x + dx
-                if 0 <= ny < rgba.shape[0] and 0 <= nx < rgba.shape[1] and rgba[ny, nx, 3] > 0:
-                    neighbors.append(rgba[ny, nx, :3])
-        if neighbors:
-            fill = np.mean(neighbors, axis=0).astype(np.uint8)
-            rgba[ys, xs] = (*fill, 255)
+        rgba[labels == lbl, 3] = 255
     return rgba
+
+
+def open_enclosed_gaps(rgba: np.ndarray, field: BackgroundToneField, tol: int,
+                       max_size: int) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
+    """Silüetin ICINDE kapali kalmis, dama renginde kucuk adaciklari seffaf yapar.
+
+    Neden gerekli: AI bazen kolla govde arasinda 1-3 piksellik bir bosluk
+    birakiyor. Bosluk dama renginde ama kontur tarafindan tamamen cevrelendigi
+    icin kenardan gelen flood-fill oraya ulasamiyor; sonucta ekranda gri bir
+    leke olarak kaliyor. Bosluk dama karesinden kucuk oldugu icin icinde desen
+    de gorunmuyor, sadece tek bir ton var.
+
+    NEDEN VARSAYILAN OLARAK KAPALI: bu adim guvenli bir sekilde OTOMATIKLESTIRILEMIYOR.
+    Olculen karakterlerde goz akiligi (254-255) ile damanin acik tonu (253)
+    ayni renk, ve ikisi de silüetin icinde kapali birer adacik. Ayirt etmek icin
+    denenen olcutler ve neden yetersiz kaldiklari:
+      - dama kafesinin geometrisi: dama, native piksel izgarasina oturmuyor
+        (olculen uyum %52, sansa esit) — kaynak cozunurlukte cizildigi icin
+        periyodu hucre boyutunun tam kati degil.
+      - adacik boyutu: olculen bir gorselde gercek bosluk 4 piksel, goz akinin
+        bir parcasi da 4 piksel.
+      - komsularin koyulugu: bosluklarin bir kismi tene komsu, konturla
+        cevrelenmis degil.
+    Bu yuzden secim kullaniciya birakiliyor: --fill-gaps N ile boyut siniri
+    verilir, silinen her adacik raporlanir, --preview ile gozle dogrulanir."""
+    silinen: list[tuple[int, int, int, int]] = []
+    if max_size <= 0 or field.empty:
+        return rgba, silinen
+
+    rgba = rgba.copy()
+    opaque = rgba[:, :, 3] > 0
+    aday = opaque & (field.distance <= tol)
+    labels, num = label_components(aday, connectivity=4)
+    for lbl in range(1, num + 1):
+        mask = labels == lbl
+        size = int(mask.sum())
+        if size > max_size:
+            continue
+
+        # Adacik KENDI renginde bir komsuya sahipse ona dokunmuyoruz: o zaman
+        # daha buyuk bir acik renkli parcanin ucudur (olculen ornekte ayakkabinin
+        # beyaz tabani), gercek bir bosluk degil. Gercek bosluklar renk olarak
+        # yalitiktir — cevrelerinde yalnizca kontur ya da ten vardir.
+        cevre = dilate(mask) & ~mask & opaque
+        if cevre.any():
+            ic = rgba[:, :, :3][mask].astype(np.int32)
+            dis = rgba[:, :, :3][cevre].astype(np.int32)
+            if (np.abs(dis[:, None, :] - ic[None, :, :]).max(axis=2).min() <= 2 * tol):
+                continue
+
+        ys, xs = np.where(mask)
+        silinen.append((int(ys.min()), int(xs.min()), size,
+                        int(rgba[ys[0], xs[0], :3].mean())))
+        rgba[mask] = (0, 0, 0, 0)
+    return rgba, silinen
 
 
 def remove_isolated_singletons(rgba: np.ndarray, color_tol: int = 12) -> np.ndarray:
@@ -1189,7 +1241,8 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             preview_scale: int = 8, bg_tol: int | None = None, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
-            cleanup: bool = True, verify: bool = False) -> Image.Image:
+            cleanup: bool = True, verify: bool = False,
+            fill_gaps: int = 0) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
@@ -1230,6 +1283,8 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         ).save(os.path.join(debug_dir, "2_native.png"))
 
     # 3) arka plan -> alfa
+    field = None
+    tol = bg_tol or 0
     if real_alpha is not None:
         alpha_small = downsample_by_mode(
             np.dstack([real_alpha] * 3), gx, gy, center_ratio=center_ratio
@@ -1237,7 +1292,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         rgba = np.dstack([small, np.where(alpha_small > 127, 255, 0).astype(np.uint8)])
     else:
         tones = detect_background_tones(small)
-        field = BackgroundToneField(small, tones)
+        field: BackgroundToneField | None = BackgroundToneField(small, tones)
         tol = bg_tol if bg_tol is not None else estimate_background_tolerance(field)
         print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones),
               f"(tolerans {tol}{'' if bg_tol is not None else ', olculerek secildi'})")
@@ -1266,6 +1321,23 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     if cleanup:
         rgba = remove_detached_specks(rgba, max_size=speck_size)
         rgba = fill_interior_holes(rgba, max_size=speck_size)
+
+    # 4b) kapali bosluklar. Sirasi kritik: delik doldurmadan SONRA (yoksa hemen
+    #     geri kapatilirlar) ama tek-piksel duzeltmesinden ONCE (o adim renkleri
+    #     komsuya yasliyor ve adacigin dama rengi oldugu bilgisi kayboluyor).
+    if fill_gaps > 0 and field is None:
+        print("--fill-gaps yoksayildi: dosyada gercek alfa kanali var, "
+              "dama tespiti calismadi.", file=sys.stderr)
+    elif fill_gaps > 0:
+        rgba, acilan = open_enclosed_gaps(rgba, field, tol, fill_gaps)
+        if acilan:
+            print(f"Kapali bosluk acildi ({len(acilan)} adet) — gozle dogrulayin:")
+            for y, x, size, ton in acilan:
+                print(f"  y={y} x={x}  {size} piksel  parlaklik {ton}")
+        else:
+            print(f"Kapali bosluk bulunamadi (--fill-gaps {fill_gaps}).")
+
+    if cleanup:
         rgba = remove_isolated_singletons(rgba)
         log(f"  temizlik: {opaque_before} -> {int((rgba[:, :, 3] > 0).sum())} opak piksel")
 
@@ -1317,6 +1389,12 @@ def main(argv=None):
     parser.add_argument("--no-cleanup", action="store_true",
                         help="Leke/delik/tek-piksel temizligini atlar — ham cikarim. "
                              "Temizlik gercek bir detayi yediginde bunu kullanin.")
+    parser.add_argument("--fill-gaps", type=int, default=0, metavar="N",
+                        help="Silüetin icinde kapali kalmis, dama renginde, en fazla N "
+                             "piksellik adaciklari seffaf yapar (ör. 4). Varsayilan 0 = kapali. "
+                             "GUVENLI DEGIL: goz akligi damanin acik tonuyla ayni renk "
+                             "olabiliyor. Silinen her adacik raporlanir; --preview ile "
+                             "gozle dogrulayin.")
     parser.add_argument("--debug-dir", help="Ara adimlari bu klasore yazar (izgara katmani dahil)")
     parser.add_argument("--verify", action="store_true",
                         help="Cikarimin kayipsizligini olcup raporlar: izgara oturmasi, "
@@ -1330,7 +1408,8 @@ def main(argv=None):
                 bg_tol=args.bg_tol, speck_size=args.speck_size,
                 center_ratio=args.center_ratio, debug_dir=args.debug_dir,
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
-                cleanup=not args.no_cleanup, verify=args.verify)
+                cleanup=not args.no_cleanup, verify=args.verify,
+                fill_gaps=args.fill_gaps)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1
