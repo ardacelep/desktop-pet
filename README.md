@@ -121,7 +121,7 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 | --- | --- |
 | `displayName` | Menüde görünen ad. Yoksa klasör adı kullanılır |
 | `nativeFrameSize` | Sprite dosyasındaki kare kutusunun boyutu (piksel) |
-| `displayScale` | Ekran çarpanı, **tam sayı**. Varsayılan 1 = native çözünürlük neyse ekranda o |
+| `displayScale` | İstenen ekran çarpanı. Kesirli olabilir; uygulama o ekranda güvenli en yakın değere yuvarlar |
 | `flip` | `true` ise kare çizilirken yatay aynalanır — sola yürüyüş için ayrı dosya tutmaya gerek yok |
 | `frameDuration` | Kare başına milisaniye |
 | `walkSpeed` | Yürüme hızı, saniyede piksel |
@@ -131,7 +131,24 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 
 Karakterler farklı native çözünürlükte çıkabilir; [pixelart_extract.py](tools/pixelart_extract.py) bilerek sabit bir boyuta zorlamıyor (zorlamak düşük kontrastlı küçük detayları yok ediyordu). Boyut normalizasyonu bu yüzden uygulama katmanında.
 
-Kural basit: **ekrandaki boy = native boy × `displayScale`**, ve `displayScale` her zaman tam sayı. Varsayılan 1, yani native çözünürlük neyse ekranda o. Kesirli ölçek pixel art'ı bulanıklaştırdığı için otomatik hesaplanmıyor — kararı siz veriyorsunuz.
+Kural basit: **ekrandaki boy = native boy × `displayScale`**. Varsayılan 1, yani native çözünürlük neyse ekranda o.
+
+`displayScale` kesirli olabilir, ama hangi kesirlerin bozulmadan çalıştığı **ekrana bağlı**. Bir kaynak pikselin kapladığı fiziksel piksel sayısı `displayScale × devicePixelRatio`; bu tam sayı değilse nearest-neighbor kimi pikseli n, kimini n+1 fiziksel piksel çizer ve 1 piksellik çizgiler eşitsiz kalınlaşır. Ölçüldüğünde `displayScale 1.2` / dpr 2'de dizi `2 2 3 2 3 2 2 3` çıkıyor — %50 kalınlık oynaması.
+
+Bu yüzden uygulama **çalıştığı ekranın `devicePixelRatio` değerini okuyup** istenen ölçeği güvenli olan en yakın değere yuvarlıyor. Güvenli değerler her zaman `k / dpr`:
+
+| devicePixelRatio | nerede | izin verilen ölçekler |
+| --- | --- | --- |
+| 1 | harici Retina olmayan monitör | 1, 2, 3 … |
+| 1.5 | Windows %150 | 0.67, 1.33, 2, 2.67 … |
+| 2 | Mac Retina, Windows %200 | 0.5, 1, 1.5, 2, 2.5 … |
+
+Sonuçlar: `1.2` istenirse Retina'da `1.0` kullanılır, `1.3` istenirse `1.5`. Merdiven ekran başına hesaplandığı için pet monitörler arasında sürüklendiğinde ölçek canlı olarak yeniden yuvarlanıyor.
+
+İki pratik sonuç:
+
+- **Retina'da `0.5` bedavaya küçültme.** `0.5 × 2 = 1`, yani kaynak piksel başına tam 1 fiziksel piksel — hiçbir bilgi kaybolmaz, sadece küçük görünür. Altına inmek gerçek kayıp: ölçüldüğünde `0.4`'te 87 satırın 18'i hiç çizilmiyor. Uygulama zaten `k ≥ 1` şartıyla buna izin vermiyor.
+- **Aynı karakter farklı makinede farklı boyda görünebilir.** `1.5` isteyen 87px'lik bir karakter Retina'da 130px, 1x monitörde 174px olur (yukarı yuvarlama). Netliği korumak boyut tutarlılığından ödün vermek demek; pixel art için bu takası bilerek yaptık.
 
 Karşılaştırma ölçütü `nativeFrameSize` **değil**, karakterin gerçek boyu: kutu, çapanın etrafına kare kurulduğu için kolunu yana açan bir karakterde boydan büyük çıkar. `npm run check` her karakterin gerçek boyunu yazar ve aralarında %25'ten fazla fark varsa uyarır:
 
@@ -140,7 +157,7 @@ Karşılaştırma ölçütü `nativeFrameSize` **değil**, karakterin gerçek bo
 ✓ karakter1 — Arkadaş 1  (kutu 88, boy 86px × 1 = ekranda 86px)
 ```
 
-Karakteriniz diğerlerinin yarısı kadar çıktıysa `"displayScale": 2` yazın. Katı gelmiyorsa (ör. 60px'e karşı 85px) doğru çözüm ölçeklemek değil, sprite'ı daha yüksek ızgara yoğunluğunda yeniden ürettirmek.
+Karakteriniz diğerlerinin yarısı kadar çıktıysa `"displayScale": 2` yazın. 0.5'in katı bir değer seçmek en iyisi — en yaygın ekranda (Retina) tam istediğinizi alırsınız. Aradaki bir değer gerekiyorsa doğru çözüm ölçeklemek değil, sprite'ı hedef ızgara yoğunluğunda yeniden ürettirmek.
 
 ### Kare boyutu neden kare?
 

@@ -56,7 +56,7 @@ Gemini animasyonu **tek bir sheet** olarak ürettiyse önce tüm sheet'i çıkar
 - Sheet genişliği tam olarak `frameSize × frameCount` olmalı — 1 piksel şaşarsa animasyon kayar
 - Karakter **sağa** baksın; sola yürüyüş `flip` ile üretiliyor
 - Karakterin ayakları karenin **alt kenarına** otursun, yoksa ekranda havada durur
-- Ekrandaki boy = karakterin native boyu × `displayScale`, ve `displayScale` **tam sayı**. Varsayılan 1; karakteriniz diğerlerinin yarısı kadar çıktıysa 2 yazın. `npm run check` boyları karşılaştırıp aykırı olanı söyler
+- Ekrandaki boy = karakterin native boyu × `displayScale`. Varsayılan 1; karakteriniz diğerlerinin yarısı kadar çıktıysa 2 yazın. Kesirli değer yazabilirsiniz ama **0.5'in katı** olsun — uygulama çalıştığı ekranda güvenli olan en yakın değere yuvarlıyor ve 0.5'in katları en yaygın ekranlarda birebir karşılanıyor. `npm run check` boyları karşılaştırıp aykırı olanı söyler
 
 Klasör adları için küçük harf + ASCII kullan (`karakter2`, `kedi`). macOS büyük/küçük harfe duyarsız ama Linux (ve CI) duyarlı — `Kedi` ile `kedi` orada iki ayrı klasör olur.
 

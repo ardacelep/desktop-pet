@@ -101,6 +101,15 @@ function pngAlpha(file) {
 }
 
 /**
+ * İstenen ölçeğin verilen ekranda güvenli olan en yakın karşılığı.
+ * pet.js'teki snapScale ile AYNI kural — bir kaynak piksel tam sayıda fiziksel
+ * piksel kaplamalı, yani ölçek `k / dpr` biçiminde olmalı.
+ */
+function snapScale(requested, dpr) {
+  return Math.max(1, Math.round(requested * dpr)) / dpr;
+}
+
+/**
  * Karelerin içerik ölçüleri: karakterin gerçek boyu, ayak çizgisinin kareden
  * kareye oynaması ve kutu içindeki yatay pay.
  *
@@ -212,10 +221,19 @@ function checkCharacter(folder, errors, warnings) {
     warnings.push(`${folder}: "lines" boş, tıklayınca konuşacak bir şeyi yok`);
   }
   if (meta.displayScale != null
-      && (!Number.isInteger(meta.displayScale) || meta.displayScale < 1)) {
+      && (!Number.isFinite(meta.displayScale) || meta.displayScale <= 0)) {
     errors.push(
-      `${folder}/meta.json: "displayScale" 1 veya daha büyük TAM SAYI olmalı ` +
-        `(verilen: ${meta.displayScale}). Kesirli ölçek pixel art'ı bulanıklaştırır.`
+      `${folder}/meta.json: "displayScale" pozitif bir sayı olmalı ` +
+        `(verilen: ${meta.displayScale}).`
+    );
+  } else if (meta.displayScale != null && !Number.isInteger(meta.displayScale * 2)) {
+    // Uygulama zaten her ekranda güvenli değere yuvarlıyor, ama 0.5'in katı
+    // olmayan bir istek en yaygın iki ekranda (dpr 1 ve 2) mutlaka kaydırılır.
+    warnings.push(
+      `${folder}: displayScale ${meta.displayScale} en yaygın ekranların hiçbirinde ` +
+        `birebir karşılanamıyor (dpr 1 → ${snapScale(meta.displayScale, 1)}, ` +
+        `dpr 2 → ${snapScale(meta.displayScale, 2)}). 0.5'in katı bir değer ` +
+        `yazarsanız en azından Retina'da tam isteneni alırsınız.`
     );
   }
   if (meta.displayHeight != null) {
@@ -280,16 +298,22 @@ function main() {
     }
 
     const { meta, istatistikler } = sonuc;
-    const olcek = Number.isInteger(meta.displayScale) && meta.displayScale >= 1
+    const istenen = Number.isFinite(meta.displayScale) && meta.displayScale > 0
       ? meta.displayScale
       : 1;
     const idle = istatistikler.idle;
 
     if (errors.length === before) {
       ok++;
-      const ekranBoyu = idle ? idle.boyMax * olcek : null;
+      // Uygulama ölçeği çalıştığı ekrana göre yuvarlıyor; burada en yaygın iki
+      // ekranı gösteriyoruz ki katkı veren karakterin nerede nasıl görüneceğini
+      // önden bilsin.
+      const s1 = snapScale(istenen, 1);
+      const s2 = snapScale(istenen, 2);
+      const ekranBoyu = idle ? idle.boyMax * s2 : null;
       const boyBilgi = idle
-        ? `boy ${idle.boyMax}px × ${olcek} = ekranda ${ekranBoyu}px`
+        ? `boy ${idle.boyMax}px → Retina ${idle.boyMax * s2}px (×${s2}), `
+          + `1x ekran ${idle.boyMax * s1}px (×${s1})`
         : 'boy ölçülemedi';
       console.log(`✓ ${folder} — ${meta.displayName || folder}  (kutu ${meta.nativeFrameSize}, ${boyBilgi})`);
       if (ekranBoyu) boylar.push({ folder, ekranBoyu });

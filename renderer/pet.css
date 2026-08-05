@@ -32,6 +32,14 @@ body {
   image-rendering: crisp-edges;
   cursor: grab;
   -webkit-app-region: no-drag;
+
+  /* Yatayda flex ile ORTALAMIYORUZ. Ortalama (pencere - kanvas) / 2 demek ve bu
+     yarım fiziksel piksele düşebiliyor (ör. 87 x 1.5 = 130.5 CSS px kanvas, 200px
+     pencere -> 34.75 CSS = 69.5 fiziksel px). Yarım piksel ofset, ölçek tam sayı
+     olsa bile görüntüyü yeniden örnekletip pixel art'ı bulanıklaştırır.
+     Konumu pet.js fiziksel piksel ızgarasına yuvarlayarak veriyor. */
+  position: absolute;
+  bottom: 0;
 }
 
 #pet.dragging {

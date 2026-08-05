@@ -41,6 +41,30 @@ async function calistir(win, okuDurum, app) {
   console.log(`SELFTEST pencere ${w}x${h}`);
 
   let hata = 0;
+
+  // Kanvas fiziksel piksel ızgarasına oturmalı. Oturmazsa ölçek "güvenli" olsa
+  // bile tarayıcı görüntüyü yeniden örnekler ve pixel art bulanıklaşır — gözle
+  // fark etmesi zor, sessizce bozulan cinsten bir hata.
+  const l = await win.webContents.executeJavaScript(`(() => {
+    const c = document.getElementById('pet');
+    const r = c.getBoundingClientRect();
+    return { dpr: devicePixelRatio, left: r.left, top: r.top, w: r.width, h: r.height };
+  })()`);
+
+  const tam = (v) => Math.abs(v - Math.round(v)) < 1e-6;
+  for (const [ad, deger] of [
+    ['sol kenar', l.left * l.dpr],
+    ['ust kenar', l.top * l.dpr],
+    ['genislik', l.w * l.dpr],
+    ['yukseklik', l.h * l.dpr]
+  ]) {
+    const ok = tam(deger);
+    if (!ok) hata++;
+    console.log(`SELFTEST ${ok ? 'OK  ' : 'HATA'} izgara: kanvas ${ad.padEnd(17)} `
+      + `= ${deger} fiziksel px ${ok ? '(tam sayi)' : '(TAM SAYI DEGIL -> yeniden orneklenir)'}`);
+  }
+  console.log(`SELFTEST      dpr=${l.dpr}, kanvas ${l.w}x${l.h} CSS px @ sol ${l.left}`);
+
   for (const p of PROBLAR) {
     const x = p.x(w, h);
     const y = p.y(w, h);

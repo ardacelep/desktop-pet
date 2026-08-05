@@ -47,10 +47,14 @@ class Pet {
     this.windowSize = { width: 200, height: 180 };
     this.bubbleHeadroom = 92;
 
-    // Ölçek her zaman TAM SAYI. Kesirli ölçek pixel art'ı bulanıklaştırıyor;
-    // pixelart_extract.py da bu yüzden native çözünürlüğü zorlamıyor ve
-    // ölçeklemeyi bilerek uygulama katmanına bırakıyor.
+    // Ölçek, meta.json'ın istediği değerin O EKRANDA güvenli olan en yakın
+    // karşılığı (bkz. snapScale). Ekran değişince yeniden hesaplanıyor.
+    this.dpr = window.devicePixelRatio || 1;
+    this.wantedScale = 1;
     this.scale = 1;
+    this.canvasSize = 0;
+    this.canvasLeft = 0;
+    this.character = null;
     // Kare kutusunun kenarındaki boş pay (native px). Yürüme sınırları ve
     // ayak hizası bundan hesaplanıyor.
     this.contentMargin = 0;
@@ -113,10 +117,12 @@ class Pet {
       };
     }
 
+    this.character = character;
     this.clips = clips;
     this.lines = meta.lines?.length ? meta.lines : ['...'];
     this.walkSpeed = meta.walkSpeed ?? 40;
-    this.scale = resolveScale(character);
+    this.wantedScale = requestedScale(character);
+    this.scale = snapScale(this.wantedScale, this.dpr);
 
     const list = Object.values(clips);
 
@@ -136,20 +142,76 @@ class Pet {
   /**
    * Pencereyi karakterin gerçek boyutuna göre ölçer. Sabit 200x180 pencere,
    * displayScale ile büyütülmüş bir karakteri kırpardı.
+   *
+   * Pencere ölçüleri TAM SAYI CSS piksel: Electron zaten DIP'i yuvarlıyor, ve
+   * kanvasın fiziksel ızgaraya oturması bu varsayıma dayanıyor.
    */
   async resizeWindowForCharacter() {
     const maxFrame = Math.max(...Object.values(this.clips).map((c) => c.frameSize));
     this.canvasSize = maxFrame * this.scale;
+    const kutu = Math.ceil(this.canvasSize);
 
     const bounds = await this.api.resize(
-      Math.max(BUBBLE_MIN_WIDTH, this.canvasSize),
-      this.canvasSize + this.bubbleHeadroom
+      Math.max(BUBBLE_MIN_WIDTH, kutu),
+      kutu + this.bubbleHeadroom
     );
     if (!bounds) return;
 
     this.windowSize = { width: bounds.width, height: bounds.height };
     this.x = bounds.x;
     this.y = bounds.y;
+    this.layoutCanvas();
+  }
+
+  /** Ekran değişince ölçeği yeniden yuvarlar; sprite'ları yeniden yüklemez. */
+  async applyDisplayScale() {
+    if (!this.character) return;
+    this.scale = snapScale(this.wantedScale, this.dpr);
+    await this.resizeWindowForCharacter();
+    this.snapToGround();
+    this.clampToWorkArea();
+    this.api.move(this.x, this.y);
+  }
+
+  /**
+   * Kanvası fiziksel piksel ızgarasına oturtur.
+   *
+   * CSS ile ortalamak `(pencere - kanvas) / 2` demek ve bu yarım fiziksel
+   * piksele düşebiliyor: 87 kutuluk bir karakter ölçek 1.5'te 130.5 CSS px
+   * kanvas veriyor, 200px pencerede ofset 34.75 CSS = 69.5 fiziksel px. O yarım
+   * piksel, ölçek "güvenli" olsa bile görüntüyü yeniden örnekletir. Bu yüzden
+   * ofseti fiziksel piksele yuvarlıyoruz — karakter kutuda yarım piksel yana
+   * kayıyor, ama ızgaraya oturuyor.
+   */
+  layoutCanvas() {
+    const frameSize = this.currentFrameSize || this.canvasSize / this.scale;
+    const css = frameSize * this.scale;
+
+    const kanvasDev = Math.round(css * this.dpr);
+    const pencereDev = Math.round(this.windowSize.width * this.dpr);
+    this.canvasLeft = Math.floor((pencereDev - kanvasDev) / 2) / this.dpr;
+
+    this.canvas.style.left = `${this.canvasLeft}px`;
+    this.canvas.style.width = `${css}px`;
+    this.canvas.style.height = `${css}px`;
+  }
+
+  /**
+   * Pet monitörler arasında sürüklenebiliyor ve her ekranın güvenli ölçek
+   * merdiveni farklı. devicePixelRatio değişimini matchMedia ile izliyoruz;
+   * bu, ana süreçte pencere konumunu yoklamaktan daha ucuz ve doğrudan
+   * renderer'ın gördüğü değeri veriyor.
+   */
+  watchDpr() {
+    const mq = window.matchMedia(`(resolution: ${this.dpr}dppx)`);
+    mq.addEventListener('change', () => {
+      const yeni = window.devicePixelRatio || 1;
+      if (yeni !== this.dpr) {
+        this.dpr = yeni;
+        this.applyDisplayScale().catch((err) => console.error(err));
+      }
+      this.watchDpr(); // yeni dpr için yeni sorgu kur
+    }, { once: true });
   }
 
   bindEvents() {
@@ -171,6 +233,8 @@ class Pet {
     this.api.onCharacterChanged((character) => {
       this.applyCharacter(character).catch((err) => console.error(err));
     });
+
+    this.watchDpr();
 
     this.api.onPositionReset((pos) => {
       this.x = pos.x;
@@ -220,9 +284,8 @@ class Pet {
     // büyütüp karakteri yürümeye başlayınca boy değiştirmiş gibi gösterirdi.
     // frameSize x scale demek "1 native piksel = scale CSS piksel", yani kutu ne
     // olursa olsun karakterin ekrandaki boyu sabit kalıyor.
-    const css = clip.frameSize * this.scale;
-    this.canvas.style.width = `${css}px`;
-    this.canvas.style.height = `${css}px`;
+    this.currentFrameSize = clip.frameSize;
+    this.layoutCanvas();
   }
 
   randomIdleWait() {
@@ -424,7 +487,12 @@ class Pet {
    * ekranın kenarına ~55 piksel kala duruyordu.
    */
   spriteInset() {
-    return (this.windowSize.width - this.canvasSize) / 2 + this.contentMargin * this.scale;
+    // Klip değişince sınırlar oynamasın diye EN BÜYÜK kutuya göre hesaplanıyor,
+    // o anki klibe göre değil.
+    const pencereDev = Math.round(this.windowSize.width * this.dpr);
+    const kanvasDev = Math.round(this.canvasSize * this.dpr);
+    const solDev = Math.floor((pencereDev - kanvasDev) / 2);
+    return solDev / this.dpr + this.contentMargin * this.scale;
   }
 
   /** Pencere X'inin gidebileceği aralık — karakterin kendisi ekran kenarına değsin. */
@@ -452,28 +520,43 @@ class Pet {
 }
 
 /**
- * Karakterin ekran ölçeği. Varsayılan 1:1 — native çözünürlük neyse ekranda o.
- * Aykırı bir karakter (çok küçük ya da çok büyük native ızgara) gelirse
- * meta.json'a TAM SAYI bir `displayScale` yazılır; kesirli ölçek pixel art'ı
- * bulanıklaştırdığı için otomatik hesaplanmıyor, kararı insan veriyor.
+ * meta.json'ın İSTEDİĞİ ölçek. Kesirli olabilir — hangi değerlerin güvenli
+ * olduğu çalışılan ekrana bağlı, o yüzden burada yuvarlama yapmıyoruz.
  *
- * Eski meta.json'lardaki `displayHeight` hâlâ okunuyor: kare kutusuna oranı
- * en yakın tam sayıya yuvarlanıyor.
+ * Eski meta.json'lardaki `displayHeight` hâlâ okunuyor: kare kutusuna oranı.
  */
-function resolveScale(character) {
+function requestedScale(character) {
   const { meta, nativeFrameSize } = character;
 
   if (meta.displayScale != null) {
-    const s = Math.round(meta.displayScale);
-    if (Number.isFinite(s) && s >= 1) return s;
+    const s = Number(meta.displayScale);
+    if (Number.isFinite(s) && s > 0) return s;
     console.warn(`displayScale geçersiz (${meta.displayScale}), 1 kullanılıyor.`);
     return 1;
   }
-
-  if (meta.displayHeight && nativeFrameSize) {
-    return Math.max(1, Math.round(meta.displayHeight / nativeFrameSize));
-  }
+  if (meta.displayHeight && nativeFrameSize) return meta.displayHeight / nativeFrameSize;
   return 1;
+}
+
+/**
+ * İstenen ölçeği, O EKRANDA bozulma üretmeyen en yakın değere yuvarlar.
+ *
+ * Bir kaynak pikselin kapladığı fiziksel piksel sayısı `scale × dpr`. Bu tam
+ * sayı değilse nearest-neighbor kimi pikseli n, kimini n+1 fiziksel piksel
+ * çiziyor: ölçüldüğünde displayScale 1.2 / dpr 2'de dizi `2 2 3 2 3 2 2 3`
+ * çıkıyor, yani 1 piksellik bir çizgi yer yer %50 kalınlaşıyor. Tam sayı
+ * olduğunda dizi sabit.
+ *
+ * Dolayısıyla güvenli değerler `k / dpr` (k tam sayı). Merdiven ekrana göre
+ * değişiyor: dpr 2'de 0.5, 1, 1.5, 2 …; dpr 1'de yalnızca 1, 2, 3 …
+ *
+ * k en az 1: `scale × dpr < 1` olsaydı bazı kaynak pikseller hiç çizilmezdi
+ * (ölçüldü — dpr 2 / displayScale 0.4'te 87 satırın 18'i düşüyor).
+ * Eşitlikte yukarı yuvarlanır (Math.round), yani pet küçülmek yerine büyür.
+ */
+function snapScale(requested, dpr) {
+  const k = Math.max(1, Math.round(requested * dpr));
+  return k / dpr;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
