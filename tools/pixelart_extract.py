@@ -176,27 +176,40 @@ class AxisGrid:
         return e[:self.count + 1] if len(e) > self.count + 1 else e
 
 
-def quiet_line_ratios(arr: np.ndarray, noise_tol: float = 1.0) -> tuple[float, float]:
-    """Komsu sutun/satir ciftlerinin ne kadarinin birbirinin "ayni" oldugunu olcer.
+def line_diff_shape(arr: np.ndarray) -> tuple[float, float]:
+    """Her eksen icin komsu satir/sutun farklarinin MEDYAN/ORTALAMA oranini verir.
 
-    TAM esitlik yerine kucuk bir tolerans kullaniliyor: AI render'lari duz bir blok
-    icinde bile piksel basina hafif oynama uretiyor, gercek bir Gemini ciktisinda
-    birebir ayni komsu sutun orani %0 cikiyor."""
-    dc = np.abs(np.diff(arr.astype(np.float32), axis=1)).mean(axis=(0, 2))
-    dr = np.abs(np.diff(arr.astype(np.float32), axis=0)).mean(axis=(1, 2))
-    return float((dc < noise_tol).mean()), float((dr < noise_tol).mean())
+    Bu oran, farklarin dagiliminin bicimini olcer ve olcekten bagimsizdir:
+      - Buyutulmus pixel art'ta dagilim IKI TEPELI olur. Komsu ciftlerin cogu ayni
+        blogun icindedir (fark ~ gurultu), azinlik bir kismi blok siniridir (fark
+        buyuk). Medyan gurultu seviyesinde kalir, ortalamayi sinirlar yukari ceker,
+        oran kucuk cikar.
+      - Native bir gorselde (ya da illustrasyonda) boyle bir ayrim yok; dagilim tek
+        tepeli, medyan ile ortalama birbirine yakin, oran 1'e yaklasir."""
+    a = arr.astype(np.float32)
+    out = []
+    for axis in (1, 0):
+        keep = tuple(i for i in (0, 1, 2) if i != axis)
+        d = np.abs(np.diff(a, axis=axis)).mean(axis=keep)
+        out.append(float(np.median(d) / max(float(d.mean()), 1e-6)))
+    return out[0], out[1]
 
 
-def looks_already_native(arr: np.ndarray, max_quiet_ratio: float = 0.5) -> bool:
+def looks_already_native(arr: np.ndarray, max_shape_ratio: float = 0.7) -> bool:
     """Gorsel zaten native cozunurlukte mi? Bu on kontrol olmadan, zaten native bir
     dosya verildiginde izgara tespiti anlamsiz bir periyot uydurabiliyor.
 
-    Olcut IKI eksenin de sessiz olmasi: buyutulmus bir pixel art'ta hem sutunlarin
-    hem satirlarin cogu komsusuyla ayni (olculen: %81 / %95). Native bir gorselde
-    en az bir eksen yogundur — kenar boslugu yuzunden sutunlarin %60'i sessiz olsa
-    bile satirlar %9'da kalir. Bu yuzden max degil MIN'e bakiyoruz."""
-    quiet_cols, quiet_rows = quiet_line_ratios(arr)
-    return min(quiet_cols, quiet_rows) < max_quiet_ratio
+    Onceki surum "komsu sutunlarin yuzde kaci birbirinden 1 birimden az farkli"
+    diye soruyordu. Bu MUTLAK esik kirilgan cikti: sikistirma gurultusu olan bir
+    Gemini ciktisinda blok ici farklar 1'in biraz uzerine ciktigi icin gorsel
+    "zaten native" sanildi ve 1024x1024'luk bir sheet (gercek cozunurlugu 128x128)
+    hic indirgenmeden, 40 bin renkle kaydedildi.
+
+    Yerine olcekten bagimsiz bir bicim olcutu kullaniliyor. 25 gercek dosyada
+    olculdu: buyutulmus olanlar 0.28-0.52 araliginda, native pixel art ve
+    illustrasyonlar 0.85-1.01 araliginda. Esik ikisinin arasindaki bosluga
+    konuldu."""
+    return max(line_diff_shape(arr)) >= max_shape_ratio
 
 
 def boundary_signal(arr: np.ndarray, axis: int) -> np.ndarray:
