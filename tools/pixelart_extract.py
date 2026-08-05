@@ -16,7 +16,11 @@ BU SCRIPT NE YAPAR
     3. Dama desenini gercek alfa seffafligina cevirir. Dama tonlari sabit degil:
        her satir/sutun icin kenar seridinden AYRI ornekleniyor, cunku render'da
        ton goruntu boyunca kayabiliyor. Tolerans da olculerek seciliyor.
-    4. Kalan kucuk artefaktlari temizler ve kenar bosluklarini kirpar.
+    4. Iki uzuv arasinda konturla kapatilmis dama ceplerini acar (yarik bicimli
+       olanlar otomatik, duz renkliler --fill-gaps ile), kalan kucuk artefaktlari
+       temizler ve kenar bosluklarini kirpar. Temizlik KAYNAGA danisir: tek
+       piksellik bir renk kaynakta hucrenin tamamini kapliyorsa kasitli bir
+       detaydir (goz aki, parilti) ve korunur.
 
 ONCEKI SCRIPTLERDEN FARKI — KOK SEBEP DUZELTMESI
     Eski surumler blok boyutunu TAM SAYIYA yuvarliyordu (`block = 10`, `arr[i*block:...]`).
@@ -76,6 +80,70 @@ def pack_rgb(rgb: np.ndarray) -> np.ndarray:
 
 def unpack_rgb(packed: int) -> tuple[int, int, int]:
     return ((packed >> 16) & 255, (packed >> 8) & 255, packed & 255)
+
+
+def unpack_rgb_array(packed: np.ndarray) -> np.ndarray:
+    """Paketlenmis renk dizisini (N,) -> (N,3) int32 aciyor."""
+    p = np.asarray(packed, dtype=np.int32)
+    return np.stack([(p >> 16) & 255, (p >> 8) & 255, p & 255], axis=-1)
+
+
+# Dogrudan yayin yolunun ayirmasina izin verilen en buyuk gecici eleman sayisi.
+# 2e6 eleman = 24 MB int32; ustunde sabit maliyetli kup yolu kazaniyor.
+_GAMUT_BROADCAST_BUDGET = 2_000_000
+
+
+def _gamut_cube(gamut: np.ndarray, radius: int) -> np.ndarray:
+    """RGB kupunun, `gamut` kumesine L∞ uzakligi `radius`i asmayan noktalari.
+
+    L∞ toplari kutu oldugu icin genisletme EKSENLERE AYRILABILIR: her eksende
+    (2r+1)'lik kayan pencerede en az bir isaretli nokta var mi diye bakmak yeter.
+    Pencere sorgusu prefix toplamla sabit zamanda cikiyor.
+
+    Onemli olan bellek: kup girdiden BAGIMSIZ olarak 16 MB, ara prefix dizisi
+    34 MB. Yani gamut kac renk olursa olsun tavan ayni."""
+    occ = np.zeros((256, 256, 256), dtype=bool)
+    if len(gamut):
+        occ[gamut[:, 0], gamut[:, 1], gamut[:, 2]] = True
+    r = int(np.clip(radius, 0, 255))
+    if r == 0:
+        return occ
+
+    idx = np.arange(256)
+    hi = np.clip(idx + r + 1, 0, 256)   # prefix dizisi 257 uzunlugunda
+    lo = np.clip(idx - r, 0, 256)
+    for axis in (0, 1, 2):
+        pad = list(occ.shape)
+        pad[axis] = 1
+        # eksen uzunlugu 256, dolayisiyla toplam <= 256: uint16 rahat yetiyor
+        cs = np.concatenate([np.zeros(pad, dtype=np.uint16),
+                             np.cumsum(occ, axis=axis, dtype=np.uint16)], axis=axis)
+        occ = np.take(cs, hi, axis=axis) > np.take(cs, lo, axis=axis)
+    return occ
+
+
+def within_gamut(query: np.ndarray, gamut: np.ndarray, radius: int) -> np.ndarray:
+    """`query`deki her rengin `gamut`taki bir renge L∞ uzakligi <= radius mi?
+
+    Iki yol da AYNI sonucu verir; secim yalnizca maliyet icin.
+
+    Dogrudan yayin len(query)*len(gamut)*3 buyuklugunde gecici dizi ayirir.
+    Temiz girdide gamut bir kac renk oldugu icin bu bedava; ama sikistirma
+    gurultulu bir Gemini ciktisinda gamut on binlerce renge cikiyor ve carpim
+    patliyor (olculdu: 128567 renk x 71943 gamut x 3 int32 = 111 GB tek bir
+    gecici dizi — surec 4 GB'a sisip takas'a giriyor, CPU %0.4'te kaliyordu).
+    O yuzden carpim butceyi asinca sabit bellekli kup yoluna geciliyor."""
+    query = np.asarray(query, dtype=np.int32).reshape(-1, 3)
+    gamut = np.asarray(gamut, dtype=np.int32).reshape(-1, 3)
+    if query.size == 0:
+        return np.zeros(0, dtype=bool)
+    if len(gamut) == 0:
+        return np.zeros(len(query), dtype=bool)
+    if len(query) * len(gamut) <= _GAMUT_BROADCAST_BUDGET:
+        return (np.abs(query[:, None, :] - gamut[None, :, :]).max(axis=2).min(axis=1)
+                <= radius)
+    cube = _gamut_cube(gamut, radius)
+    return cube[query[:, 0], query[:, 1], query[:, 2]]
 
 
 def label_components(mask: np.ndarray, connectivity: int = 4):
@@ -947,20 +1015,27 @@ def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
     if num <= 1:
         return rgba
 
-    confirmed = np.array([unpack_rgb(int(v))
-                          for v in np.unique(pack_rgb(rgba[:, :, :3][~opaque]))],
-                         dtype=np.int32)
+    confirmed = unpack_rgb_array(np.unique(pack_rgb(rgba[:, :, :3][~opaque])))
     sizes = np.bincount(labels.ravel())
     main = int(np.argmax(sizes[1:])) + 1
     wide = tol * 3
-    for lbl in range(1, num + 1):
-        if lbl == main:
-            continue
-        mask = labels == lbl
-        colors = rgba[:, :, :3][mask].astype(np.int32)
-        near = np.abs(colors[:, None, :] - confirmed[None, :, :]).max(axis=2).min(axis=1)
-        if (near <= wide).mean() >= share:
-            rgba[mask] = (0, 0, 0, 0)
+
+    # Gamut sorgusu parca parca degil TEK SEFERDE yapiliyor: hem tekrar eden
+    # renkler bir kez sorulmus oluyor, hem de her etiket icin goruntu boyunda
+    # `labels == lbl` taramasi yapmaktan kurtuluyoruz (gurultulu girdide bilesen
+    # sayisi binlere cikabiliyor).
+    detached = (labels > 0) & (labels != main)
+    if not detached.any():
+        return rgba
+    uniq, inverse = np.unique(pack_rgb(rgba[:, :, :3][detached]), return_inverse=True)
+    near_px = within_gamut(unpack_rgb_array(uniq), confirmed, wide)[inverse]
+
+    lbl_of_px = labels[detached]
+    toplam = np.bincount(lbl_of_px, minlength=num + 1)
+    yakin = np.bincount(lbl_of_px, weights=near_px, minlength=num + 1)
+    sil = yakin / np.maximum(toplam, 1) >= share   # (near <= wide).mean() >= share
+    sil[0] = sil[main] = False
+    rgba[sil[labels]] = (0, 0, 0, 0)
     return rgba
 
 
@@ -1064,7 +1139,9 @@ def fill_interior_holes(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
 
 
 def open_enclosed_gaps(rgba: np.ndarray, field: BackgroundToneField, tol: int,
-                       max_size: int) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
+                       max_size: int, auto_patterned: bool = True,
+                       min_uzama: float = 3.0, min_uzunluk: int = 5
+                       ) -> tuple[np.ndarray, list[tuple[int, int, int, int, bool]]]:
     """Silüetin ICINDE kapali kalmis, dama renginde kucuk adaciklari seffaf yapar.
 
     Neden gerekli: AI bazen kolla govde arasinda 1-3 piksellik bir bosluk
@@ -1073,21 +1150,48 @@ def open_enclosed_gaps(rgba: np.ndarray, field: BackgroundToneField, tol: int,
     leke olarak kaliyor. Bosluk dama karesinden kucuk oldugu icin icinde desen
     de gorunmuyor, sadece tek bir ton var.
 
-    NEDEN VARSAYILAN OLARAK KAPALI: bu adim guvenli bir sekilde OTOMATIKLESTIRILEMIYOR.
-    Olculen karakterlerde goz akiligi (254-255) ile damanin acik tonu (253)
-    ayni renk, ve ikisi de silüetin icinde kapali birer adacik. Ayirt etmek icin
-    denenen olcutler ve neden yetersiz kaldiklari:
-      - dama kafesinin geometrisi: dama, native piksel izgarasina oturmuyor
-        (olculen uyum %52, sansa esit) — kaynak cozunurlukte cizildigi icin
-        periyodu hucre boyutunun tam kati degil.
-      - adacik boyutu: olculen bir gorselde gercek bosluk 4 piksel, goz akinin
-        bir parcasi da 4 piksel.
-      - komsularin koyulugu: bosluklarin bir kismi tene komsu, konturla
-        cevrelenmis degil.
-    Bu yuzden secim kullaniciya birakiliyor: --fill-gaps N ile boyut siniri
-    verilir, silinen her adacik raporlanir, --preview ile gozle dogrulanir."""
-    silinen: list[tuple[int, int, int, int]] = []
-    if max_size <= 0 or field.empty:
+    IKI YOL VAR, cunku adaciklarin bir kismi guvenle otomatiklestirilebiliyor,
+    bir kismi kesinlikle degil.
+
+    1) YARIK bicimli, desenli adaciklar — otomatik (auto_patterned). Iki sart
+       birlikte aranir, cunku tek basina hicbiri yetmiyor:
+
+       a) Renk yayilimi `tol`u asiyor — adacik duz bir yuzey degil, icinde dama
+          tonlarinin IKISI birden geciyor.
+       b) Adacik UZAMIS: uzunluk^2 / alan >= `min_uzama`. Kapali bir dama cebi
+          fiziksel olarak iki uzuv arasindaki YARIKTIR (kolla govde, iki bacak
+          arasi) — dogasi geregi uzun ve incedir.
+
+       (a) tek basina denendi ve YANLISTI: olculen bir portrede gozluk ardindaki
+       goz akilari da iki tonlu cikiyor (beyaz aki + gri iris, yayilim 36-41,
+       tol 18) ve dordu birden siliniyordu. Bicim ikisini kesin ayiriyor —
+       olculen gercek yariklar 4.8 / 5.8 / 14.3, gozler 1.3-1.5; arada genis bir
+       bosluk var. Arka plana uzaklik da denendi, ayirmiyor (yarik 1-6, goz
+       9-14 — orusuyorlar).
+
+       Bu adaciklarda BOYUT SINIRI ARANMAZ; olculen yariklar 34-41 piksel, yani
+       makul her `max_size` degerinin ustunde, ve `max_size`i buyutmek duz
+       adaciklar icin riski artirirdi.
+
+    2) DUZ adaciklar — elle (--fill-gaps N). Bunlar guvenli sekilde
+       otomatiklestirilemiyor: olculen karakterlerde goz akiligi (254-255) ile
+       damanin acik tonu (253) ayni renk, ve ikisi de silüetin icinde kapali
+       birer adacik. Ayirt etmek icin denenen olcutler ve neden yetersiz
+       kaldiklari:
+         - dama kafesinin geometrisi: dama, native piksel izgarasina oturmuyor
+           (olculen uyum %52, sansa esit) — kaynak cozunurlukte cizildigi icin
+           periyodu hucre boyutunun tam kati degil.
+         - adacik boyutu: olculen bir gorselde gercek bosluk 4 piksel, goz akinin
+           bir parcasi da 4 piksel.
+         - komsularin koyulugu: bosluklarin bir kismi tene komsu, konturla
+           cevrelenmis degil.
+       Bu yuzden secim kullaniciya birakiliyor: --fill-gaps N ile boyut siniri
+       verilir, silinen her adacik raporlanir, --preview ile gozle dogrulanir.
+
+    Donen listede son alan, adacigin desenli (otomatik) yolla mi silindigini
+    soyler."""
+    silinen: list[tuple[int, int, int, int, bool]] = []
+    if field.empty or (max_size <= 0 and not auto_patterned):
         return rgba, silinen
 
     rgba = rgba.copy()
@@ -1097,7 +1201,17 @@ def open_enclosed_gaps(rgba: np.ndarray, field: BackgroundToneField, tol: int,
     for lbl in range(1, num + 1):
         mask = labels == lbl
         size = int(mask.sum())
-        if size > max_size:
+
+        ic_renk = rgba[:, :, :3][mask].astype(np.int32)
+        ys_, xs_ = np.where(mask)
+        uzunluk = max(int(ys_.max() - ys_.min()), int(xs_.max() - xs_.min())) + 1
+        desenli = bool(
+            auto_patterned
+            and int((ic_renk.max(axis=0) - ic_renk.min(axis=0)).max()) > tol
+            and uzunluk >= min_uzunluk
+            and uzunluk * uzunluk / size >= min_uzama)
+
+        if size > max_size and not desenli:
             continue
 
         # Adacik KENDI renginde bir komsuya sahipse ona dokunmuyoruz: o zaman
@@ -1106,23 +1220,49 @@ def open_enclosed_gaps(rgba: np.ndarray, field: BackgroundToneField, tol: int,
         # yalitiktir — cevrelerinde yalnizca kontur ya da ten vardir.
         cevre = dilate(mask) & ~mask & opaque
         if cevre.any():
-            ic = rgba[:, :, :3][mask].astype(np.int32)
             dis = rgba[:, :, :3][cevre].astype(np.int32)
-            if (np.abs(dis[:, None, :] - ic[None, :, :]).max(axis=2).min() <= 2 * tol):
+            if (np.abs(dis[:, None, :] - ic_renk[None, :, :]).max(axis=2).min() <= 2 * tol):
                 continue
 
         ys, xs = np.where(mask)
         silinen.append((int(ys.min()), int(xs.min()), size,
-                        int(rgba[ys[0], xs[0], :3].mean())))
+                        int(rgba[ys[0], xs[0], :3].mean()), desenli))
         rgba[mask] = (0, 0, 0, 0)
     return rgba, silinen
 
 
-def remove_isolated_singletons(rgba: np.ndarray, color_tol: int = 12) -> np.ndarray:
+def cell_support(arr: np.ndarray, gx: AxisGrid, gy: AxisGrid, small: np.ndarray,
+                 color_tol: int = 6) -> np.ndarray:
+    """Her hucre icin: secilen rengin KAYNAKTAKI hucre cekirdeginde kapladigi pay.
+
+    "Bu renk kaynakta gercekten var miydi?" sorusunun cevabi. Kasitli cizilmis bir
+    detay (goz aki, parilti, kupe) kaynakta hucrenin neredeyse tamamini kaplar;
+    ornekleme artefakti ise iki hucrenin sinirindan sizmis bir azinliktir.
+
+    Olcemedigimiz hucreler (dejenere pencere) 1.0 kalir — "bilmiyorsak dokunma"."""
+    support = np.ones(small.shape[:2], dtype=np.float32)
+    for i, j, core in cell_cores(arr, gx, gy):
+        chosen = small[i, j].astype(np.int32)
+        support[i, j] = float((np.abs(core - chosen).max(axis=1) <= color_tol).mean())
+    return support
+
+
+def remove_isolated_singletons(rgba: np.ndarray, color_tol: int = 12,
+                               support: np.ndarray | None = None,
+                               min_support: float = 0.6) -> np.ndarray:
     """Hicbir opak komsusuyla ayni renkte olmayan tek piksellik yabanci noktalari
     temizler. Silueti tasan cikintilar silinir, ic azinlik renkler baskin komsu
     rengiyle degistirilir. Gercek kontur cizgileri en az bir ayni renkli komsuya
-    sahip oldugu icin etkilenmez."""
+    sahip oldugu icin etkilenmez.
+
+    `support` verilirse (bkz. cell_support) kaynakta karsiligi olan pikseller
+    korunur. Bu sart olmadan olcut ("tek piksel + komsularindan farkli renk")
+    artefakti da GERCEK DETAYI da ayni sekilde tanimliyordu ve ikisini ayirmanin
+    yolu yoktu: olculen bir portrede gozun aki (254,245,228) tam da boyle tek bir
+    piksel oldugu icin komsu konturun rengiyle (50,21,15) boyaniyor, yuz kapali
+    gozlu cikiyordu. Ayni gorselde dokunulan 105 pikselin destek dagilimi iki
+    kumeye ayriliyor — 77'si >=0.90 (kaynakta birebir var), 25'i <=0.60 (gercek
+    artefakt) — ve 0.6-0.7 araligi tamamen bos; esik oraya konuldu."""
     rgba = rgba.copy()
     h, w = rgba.shape[:2]
     alpha = rgba[:, :, 3]
@@ -1130,6 +1270,9 @@ def remove_isolated_singletons(rgba: np.ndarray, color_tol: int = 12) -> np.ndar
 
     ys, xs = np.where(alpha > 0)
     for y, x in zip(ys, xs):
+        if support is not None and support[y, x] >= min_support:
+            continue
+
         neighbor_colors = []
         for dy, dx in offsets:
             ny, nx = y + dy, x + dx
@@ -1501,17 +1644,28 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     if fill_gaps > 0 and field is None:
         print("--fill-gaps yoksayildi: dosyada gercek alfa kanali var, "
               "dama tespiti calismadi.", file=sys.stderr)
-    elif fill_gaps > 0:
+    elif field is not None:
         rgba, acilan = open_enclosed_gaps(rgba, field, tol, fill_gaps)
-        if acilan:
-            print(f"Kapali bosluk acildi ({len(acilan)} adet) — gozle dogrulayin:")
-            for y, x, size, ton in acilan:
+        desenli = [a for a in acilan if a[4]]
+        duz = [a for a in acilan if not a[4]]
+        if desenli:
+            print(f"Silüet icinde dama DESENI tasiyan {len(desenli)} adacik "
+                  "seffaf yapildi:")
+            for y, x, size, ton, _ in desenli:
                 print(f"  y={y} x={x}  {size} piksel  parlaklik {ton}")
-        else:
-            print(f"Kapali bosluk bulunamadi (--fill-gaps {fill_gaps}).")
+        if duz:
+            print(f"Duz renkli kapali bosluk acildi ({len(duz)} adet) — "
+                  "gozle dogrulayin:")
+            for y, x, size, ton, _ in duz:
+                print(f"  y={y} x={x}  {size} piksel  parlaklik {ton}")
+        if fill_gaps > 0 and not duz:
+            print(f"Duz renkli kapali bosluk bulunamadi (--fill-gaps {fill_gaps}).")
 
     if cleanup:
-        rgba = remove_isolated_singletons(rgba)
+        # Kaynak destegi: "bu renk kaynakta gercekten var miydi?" Olmadan tek
+        # piksellik gercek detaylar (goz aki gibi) artefakt sanilip boyaniyor.
+        support = cell_support(arr, gx, gy, small) if upscaled else None
+        rgba = remove_isolated_singletons(rgba, support=support)
         log(f"  temizlik: {opaque_before} -> {int((rgba[:, :, 3] > 0).sum())} opak piksel")
 
     if merge_colors > 0:
@@ -1563,11 +1717,12 @@ def main(argv=None):
                         help="Leke/delik/tek-piksel temizligini atlar — ham cikarim. "
                              "Temizlik gercek bir detayi yediginde bunu kullanin.")
     parser.add_argument("--fill-gaps", type=int, default=0, metavar="N",
-                        help="Silüetin icinde kapali kalmis, dama renginde, en fazla N "
-                             "piksellik adaciklari seffaf yapar (ör. 4). Varsayilan 0 = kapali. "
-                             "GUVENLI DEGIL: goz akligi damanin acik tonuyla ayni renk "
-                             "olabiliyor. Silinen her adacik raporlanir; --preview ile "
-                             "gozle dogrulayin.")
+                        help="Silüetin icinde kapali kalmis, DUZ renkli, en fazla N "
+                             "piksellik adaciklari da seffaf yapar (ör. 4). Varsayilan "
+                             "0 = kapali. GUVENLI DEGIL: goz akligi damanin acik tonuyla "
+                             "ayni renk olabiliyor. Iki uzuv arasinda kalan YARIK bicimli "
+                             "dama cepleri bu bayraga gerek olmadan zaten aciliyor. "
+                             "Silinen her adacik raporlanir; --preview ile gozle dogrulayin.")
     parser.add_argument("--debug-dir", help="Ara adimlari bu klasore yazar (izgara katmani dahil)")
     parser.add_argument("--verify", action="store_true",
                         help="Cikarimin kayipsizligini olcup raporlar: izgara oturmasi, "
