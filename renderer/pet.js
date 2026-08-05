@@ -136,6 +136,7 @@ class Pet {
     this.footGap = Math.min(...list.map((c) => c.frameSize - c.content.bottom));
 
     await this.resizeWindowForCharacter();
+    this.api.reportScale(this.scale);
     this.playClip(this.state === STATE.WALKING ? this.walkClipName() : 'idle');
   }
 
@@ -163,7 +164,7 @@ class Pet {
     this.layoutCanvas();
   }
 
-  /** Ekran değişince ölçeği yeniden yuvarlar; sprite'ları yeniden yüklemez. */
+  /** Ekran ya da kullanıcı seçimi değişince ölçeği yeniden yuvarlar. */
   async applyDisplayScale() {
     if (!this.character) return;
     this.scale = snapScale(this.wantedScale, this.dpr);
@@ -171,6 +172,7 @@ class Pet {
     this.snapToGround();
     this.clampToWorkArea();
     this.api.move(this.x, this.y);
+    this.api.reportScale(this.scale);
   }
 
   /**
@@ -235,6 +237,14 @@ class Pet {
     });
 
     this.watchDpr();
+
+    this.api.onScaleChanged((scale) => {
+      // null => meta.json'daki varsayılana dön
+      this.wantedScale = scale === null ? requestedScale({ ...this.character, userScale: null })
+        : scale;
+      if (this.character) this.character.userScale = scale;
+      this.applyDisplayScale().catch((err) => console.error(err));
+    });
 
     this.api.onPositionReset((pos) => {
       this.x = pos.x;
@@ -528,6 +538,10 @@ class Pet {
 function requestedScale(character) {
   const { meta, nativeFrameSize } = character;
 
+  // Kullanıcının sağ tık menüsünden seçtiği boyut meta.json'ı ezer
+  if (Number.isFinite(character.userScale) && character.userScale > 0) {
+    return character.userScale;
+  }
   if (meta.displayScale != null) {
     const s = Number(meta.displayScale);
     if (Number.isFinite(s) && s > 0) return s;

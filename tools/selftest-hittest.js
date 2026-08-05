@@ -42,6 +42,48 @@ async function calistir(win, okuDurum, app) {
 
   let hata = 0;
 
+  // Ekran koordinatı dönüşümü. Buradaki asıl tuzak NEGATİF SIFIR: Math.round(-0.3)
+  // === -0 ve Electron'un setPosition'ı -0'da "conversion failure" fırlatıp ana
+  // süreci düşürüyor. Pet ekranın soluna yürürken x, [-0.5, 0) aralığından
+  // geçmek zorunda; uygulama tam orada çöküyordu.
+  const { ekranKoordinati, buildMenuTemplate, scaleSteps } = require('../main.js');
+  const koordinatVakalari = [
+    ['-0.3 (negatif sifir uretir)', -0.3, 0],
+    ['-0.5', -0.5, 0],
+    ['0', 0, 0],
+    ['-75.5', -75.5, -75],
+    ['120.4', 120.4, 120],
+    ['NaN', NaN, null],
+    ['Infinity', Infinity, null],
+    ['int32 disi', 3e9, null]
+  ];
+  for (const [ad, girdi, beklenen] of koordinatVakalari) {
+    const c = ekranKoordinati(girdi);
+    // Object.is: -0 ile +0'i ayirt etmek sart, === ikisini esit sayiyor
+    const ok = Object.is(c, beklenen);
+    if (!ok) hata++;
+    console.log(`SELFTEST ${ok ? 'OK  ' : 'HATA'} koordinat: ${ad.padEnd(28)} `
+      + `-> ${Object.is(c, -0) ? '-0' : c} (beklenen ${beklenen})`);
+  }
+
+  // Boyut menüsü, bulunulan ekranın merdivenini sunmalı ve o adımların hepsi
+  // "scale x dpr tam sayi" kuralına uymalı — menüden bozuk bir boyut seçilemesin.
+  for (const [dpr, beklenen] of [[1, [1, 2, 3]], [2, [0.5, 1, 1.5, 2, 2.5, 3]]]) {
+    const adimlar = scaleSteps(dpr);
+    const ok = JSON.stringify(adimlar) === JSON.stringify(beklenen);
+    if (!ok) hata++;
+    console.log(`SELFTEST ${ok ? 'OK  ' : 'HATA'} menu: dpr ${dpr} adimlari `
+      + `-> ${adimlar.join(', ')}`);
+  }
+
+  const menu = buildMenuTemplate();
+  const boyut = menu.find((m) => m.label === 'Boyut');
+  const boyutOk = Boolean(boyut && boyut.submenu.some((i) => i.type === 'radio')
+    && boyut.submenu.some((i) => i.label === 'Varsayılana dön'));
+  if (!boyutOk) hata++;
+  console.log(`SELFTEST ${boyutOk ? 'OK  ' : 'HATA'} menu: "Boyut" alt menusu `
+    + `${boyut ? boyut.submenu.filter((i) => i.type === 'radio').map((i) => i.label).join(' ') : 'YOK'}`);
+
   // Kanvas fiziksel piksel ızgarasına oturmalı. Oturmazsa ölçek "güvenli" olsa
   // bile tarayıcı görüntüyü yeniden örnekler ve pixel art bulanıklaşır — gözle
   // fark etmesi zor, sessizce bozulan cinsten bir hata.

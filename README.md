@@ -13,8 +13,8 @@ Pet kendi kendine ekranın altında gezinir, kenara çarpınca döner, sürükle
 - **Şeffaf alanlar tıklama geçirgen** — pet'in üstünde olmayan tıklamalar altındaki uygulamaya gider
 - Sürükle-bırak; bırakıldığı monitörün çalışma alanına (dock/taskbar üstüne) oturur
 - Tıklayınca konuşma balonu, karaktere özel cümle repertuarından
-- Sağ tık menüsü + sistem tepsisi ikonu
-- Son konum ve aktif karakter diske kaydedilir
+- Sağ tık menüsü + sistem tepsisi ikonu — karakter ve **boyut** değiştirme
+- Son konum, aktif karakter ve seçilen boyut diske kaydedilir
 
 ## Gereksinimler
 
@@ -144,6 +144,8 @@ Bu yüzden uygulama **çalıştığı ekranın `devicePixelRatio` değerini okuy
 | 2 | Mac Retina, Windows %200 | 0.5, 1, 1.5, 2, 2.5 … |
 
 Sonuçlar: `1.2` istenirse Retina'da `1.0` kullanılır, `1.3` istenirse `1.5`. Merdiven ekran başına hesaplandığı için pet monitörler arasında sürüklendiğinde ölçek canlı olarak yeniden yuvarlanıyor.
+
+**Boyutu kullanıcı da değiştirebilir:** pet'e sağ tıklayıp **Boyut** menüsünden. Menüdeki seçenekler sabit değil — o anda bulunulan ekranın merdiveninden üretiliyor, yani menüden bozuk bir boyut seçmek mümkün değil. Seçim karakter başına saklanıyor ve `meta.json`'daki `displayScale`'i ezer; **Varsayılana dön** ile geri alınır.
 
 İki pratik sonuç:
 

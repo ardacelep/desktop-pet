@@ -15,7 +15,10 @@ const WINDOW_HEIGHT = 180;
 const store = new Store({
   defaults: {
     activeCharacterId: null,
-    position: null
+    position: null,
+    // Kullanıcının sağ tık menüsünden seçtiği boyut, karakter başına.
+    // meta.json'daki displayScale'i ezer.
+    scaleOverrides: {}
   }
 });
 
@@ -78,12 +81,41 @@ function resolveActiveCharacter() {
 
   const wantedId = store.get('activeCharacterId') || readDefaultCharacterId();
   const entry = list.find((c) => c.id === wantedId) || list[0];
+  const overrides = store.get('scaleOverrides') || {};
 
   return {
     ...entry,
+    // Kullanıcı menüden boyut seçtiyse meta.json'daki değer yerine o geçerli
+    userScale: Number.isFinite(overrides[entry.id]) ? overrides[entry.id] : null,
     // renderer/index.html'e göreli — file:// ve asar içinde de çalışır
     baseUrl: `../characters/${entry.folder}/`
   };
+}
+
+/** Pet'in şu an bulunduğu ekranın piksel oranı. */
+function currentScaleFactor() {
+  if (!petWindow || petWindow.isDestroyed()) return 1;
+  const [x, y] = petWindow.getPosition();
+  const [w, h] = petWindow.getSize();
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(x + w / 2),
+    y: Math.round(y + h / 2)
+  });
+  return display.scaleFactor || 1;
+}
+
+/**
+ * Bu ekranda bozulma üretmeyen boyut adımları.
+ *
+ * Bir kaynak piksel tam sayıda fiziksel piksel kaplamalı, yani ölçek `k / dpr`
+ * olmalı. Merdiven ekrana göre değişiyor: Retina'da (dpr 2) yarım adımlar
+ * mümkün, düz bir 1x monitörde yalnızca tam sayılar. Bu yüzden menü sabit
+ * değil, açıldığı anda bulunulan ekrandan hesaplanıyor.
+ */
+function scaleSteps(dpr, max = 3) {
+  const adimlar = [];
+  for (let k = 1; k <= Math.round(max * dpr); k++) adimlar.push(k / dpr);
+  return adimlar;
 }
 
 /** Verilen noktayı içeren ekranın çalışma alanı (dock/taskbar hariç). */
@@ -153,6 +185,10 @@ function createPetWindow(characterId) {
 
 let currentInteractive = false;
 
+// Renderer'ın gerçekte uyguladığı ölçek. Menüdeki işareti buna göre koyuyoruz;
+// yuvarlama kuralını burada ikinci kez yazmamak için renderer bildiriyor.
+let currentScale = 1;
+
 /** Renderer'ın alfa hit-test sonucuna göre pencereyi tıklanabilir/geçirgen yapar. */
 function setInteractive(interactive) {
   if (!petWindow || petWindow.isDestroyed()) return;
@@ -182,6 +218,22 @@ function buildMenuTemplate() {
         click: () => switchCharacter(c.id)
       }))
     },
+    {
+      label: 'Boyut',
+      submenu: [
+        ...scaleSteps(currentScaleFactor()).map((s) => ({
+          label: `${s}×`,
+          type: 'radio',
+          checked: Math.abs(s - currentScale) < 1e-6,
+          click: () => setUserScale(s)
+        })),
+        { type: 'separator' },
+        {
+          label: 'Varsayılana dön',
+          click: () => setUserScale(null)
+        }
+      ]
+    },
     { type: 'separator' },
     {
       label: 'Ortaya Getir',
@@ -206,6 +258,21 @@ function buildMenuTemplate() {
 function switchCharacter(id) {
   store.set('activeCharacterId', id);
   petWindow?.webContents.send('pet:character-changed', resolveActiveCharacter());
+}
+
+/**
+ * Kullanıcının seçtiği boyutu kaydeder. `null` verilirse meta.json'daki
+ * displayScale'e geri dönülür. Renderer değeri yine kendi ekranına göre
+ * yuvarlıyor — menü zaten güvenli adımlar sunduğu için normalde değişmiyor,
+ * ama pet başka bir monitöre taşınırsa orada geçerli olana oturuyor.
+ */
+function setUserScale(scale) {
+  const id = resolveActiveCharacter().id;
+  const olcekler = { ...(store.get('scaleOverrides') || {}) };
+  if (scale === null) delete olcekler[id];
+  else olcekler[id] = scale;
+  store.set('scaleOverrides', olcekler);
+  petWindow?.webContents.send('pet:scale-changed', scale);
 }
 
 function createTray() {
@@ -268,21 +335,60 @@ ipcMain.handle('pet:resize', (_e, { width, height }) => {
   if (!petWindow || petWindow.isDestroyed()) return null;
   const [x, y] = petWindow.getPosition();
   const [, oldHeight] = petWindow.getSize();
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    console.error(`[pet] geçersiz pencere ölçüsü yok sayıldı: ${width}x${height}`);
+    return null;
+  }
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
 
-  petWindow.setBounds({ x, y: y + (oldHeight - h), width: w, height: h });
+  // y burada da ekranKoordinati'ndan geçiyor: pencere ekranın üst kenarına
+  // yakınken y + (oldHeight - h) negatif sıfıra düşebilir.
+  const ny0 = ekranKoordinati(y + (oldHeight - h));
+  if (ny0 === null) return null;
+  petWindow.setBounds({ x, y: ny0, width: w, height: h });
   const [nx, ny] = petWindow.getPosition();
   return { x: nx, y: ny, width: w, height: h };
 });
 
 ipcMain.on('pet:set-interactive', (_e, interactive) => setInteractive(Boolean(interactive)));
 
+ipcMain.on('pet:scale-applied', (_e, scale) => {
+  if (Number.isFinite(scale) && scale > 0) currentScale = scale;
+});
+
 ipcMain.handle('pet:get-work-area', (_e, point) => workAreaAt(point.x, point.y));
+
+/**
+ * Ekran koordinatını Electron'un kabul edeceği tam sayıya çevirir; çeviremezse
+ * null döner.
+ *
+ * NEGATİF SIFIR TUZAĞI: `Math.round(-0.3)` JavaScript'te `-0` veriyor ve
+ * Electron'un native int dönüşümü `-0` için "Error processing argument at
+ * index 0, conversion failure" fırlatıyor (ölçüldü — `-0`, NaN, Infinity ve
+ * int32 dışı değerler aynı hatayı veriyor). Pet ekranın soluna yürürken x,
+ * [-0.5, 0) aralığından geçmek zorunda (sol sınır negatif, çünkü pencere
+ * sprite'tan geniş) ve tam o karede ana süreç çöküyordu.
+ *
+ * `Number.isFinite(-0)` true olduğu için sıradan bir "geçerli sayı mı"
+ * kontrolü bunu YAKALAMIYOR; sıfırı ayrıca normalleştirmek gerekiyor.
+ */
+function ekranKoordinati(deger) {
+  if (!Number.isFinite(deger)) return null;
+  const n = Math.round(deger);
+  if (Math.abs(n) > 2147483647) return null; // int32 dışı da aynı hatayı veriyor
+  return n === 0 ? 0 : n; // -0 -> +0
+}
 
 ipcMain.on('pet:move', (_e, { x, y }) => {
   if (!petWindow || petWindow.isDestroyed()) return;
-  petWindow.setPosition(Math.round(x), Math.round(y));
+  const ix = ekranKoordinati(x);
+  const iy = ekranKoordinati(y);
+  if (ix === null || iy === null) {
+    console.error(`[pet] geçersiz konum yok sayıldı: x=${x} y=${y}`);
+    return;
+  }
+  petWindow.setPosition(ix, iy);
 });
 
 ipcMain.on('pet:persist-position', persistPosition);
@@ -290,3 +396,6 @@ ipcMain.on('pet:persist-position', persistPosition);
 ipcMain.on('pet:context-menu', () => {
   Menu.buildFromTemplate(buildMenuTemplate()).popup({ window: petWindow });
 });
+
+// Regresyon testi (tools/selftest-hittest.js) icin
+module.exports = { ekranKoordinati, buildMenuTemplate, scaleSteps };

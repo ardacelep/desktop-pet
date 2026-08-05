@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('petAPI', {
   /** Sağ tık menüsünü aç. */
   openContextMenu: () => ipcRenderer.send('pet:context-menu'),
 
+  /** Uygulanan ölçeği ana sürece bildir — sağ tık menüsündeki işaret için. */
+  reportScale: (scale) => ipcRenderer.send('pet:scale-applied', scale),
+
   onCharacterChanged: (cb) => ipcRenderer.on('pet:character-changed', (_e, c) => cb(c)),
+  onScaleChanged: (cb) => ipcRenderer.on('pet:scale-changed', (_e, s) => cb(s)),
   onPositionReset: (cb) => ipcRenderer.on('pet:position-reset', (_e, p) => cb(p))
 });

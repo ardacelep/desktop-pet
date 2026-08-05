@@ -64,7 +64,7 @@ Klasör adları için küçük harf + ASCII kullan (`karakter2`, `kedi`). macOS 
 
 | Dosya | Sorumluluk |
 | --- | --- |
-| `main.js` | Pencere, tray, menü, IPC, kalıcılık, karakter keşfi |
+| `main.js` | Pencere, tray, menü (karakter + boyut), IPC, kalıcılık, karakter keşfi |
 | `preload.js` | Renderer'a açılan API yüzeyi |
 | `renderer/pet.js` | Durum makinesi ve davranış |
 | `renderer/sprite-animator.js` | Kare çizimi |
