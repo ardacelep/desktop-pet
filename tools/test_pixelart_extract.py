@@ -16,8 +16,10 @@ Calistirma:
 """
 
 import os
+import subprocess
 import sys
 import tempfile
+import time
 
 import numpy as np
 from PIL import Image
@@ -537,6 +539,130 @@ def test_helpers():
           tuple(merged[0, 3, :3]) == (10, 10, 10), f"{tuple(merged[0,3,:3])}")
 
 
+def make_high_cardinality(w: int = 768, h: int = 768, seed: int = 99,
+                          cell: int = 4, amp: int = 5, drift: int = 26,
+                          blobs: int = 1200) -> np.ndarray:
+    """Gemini ciktilarindaki RENK KARDINALITESI patlamasini taklit eder.
+
+    Uc bileseni de gercek dosyadan alindi (5632x704, ~171 bin renk):
+      - dama deseni + goruntu boyunca YUMUSAK ton kaymasi,
+      - her piksele bagimsiz +/-amp yeniden-kodlama gurultusu (asil kardinalite
+        kaynagi: tek bir ton yuzlerce ayri renge dagiliyor),
+      - ana silüetten KOPUK, karakter renginde bir suru kucuk leke.
+
+    Ucu birlikte olmali: yalniz boyut buyutmek yetmiyor (5632x704 sentetik dama
+    ~3 renkle saniyeler icinde bitiyor), patlamayi kardinalite tetikliyor."""
+    rng = np.random.default_rng(seed)
+    sw, sh = w // 3, h // 2
+    sprite, mask = make_sprite(sw, sh, seed=5)
+
+    yy, xx = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+    t0 = np.array([254, 0, 246], np.int16)
+    t1 = np.array([179, 3, 176], np.int16)
+    img = np.where((((yy // cell) + (xx // cell)) % 2)[..., None] == 0, t0, t1)
+    img = img + (drift * np.sin(2 * np.pi * yy / h)
+                 * np.cos(3 * np.pi * xx / w)).astype(np.int16)[..., None]
+
+    oy, ox = (h - sh) // 2, (w - sw) // 2
+    govde = img[oy:oy + sh, ox:ox + sw]
+    img[oy:oy + sh, ox:ox + sw] = np.where(mask[..., None],
+                                           sprite.astype(np.int16), govde)
+
+    palet = np.array([[26, 26, 30], [60, 58, 70], [120, 100, 80], [210, 170, 140],
+                      [40, 90, 70], [180, 60, 60], [230, 230, 235], [90, 90, 95]],
+                     np.int16)
+    for _ in range(blobs):
+        by, bx = int(rng.integers(2, h - 10)), int(rng.integers(2, w - 10))
+        if oy - 10 < by < oy + sh + 10 and ox - 10 < bx < ox + sw + 10:
+            continue                     # govdeye degmesin, KOPUK kalsin
+        s = int(rng.integers(5, 9))
+        img[by:by + s, bx:bx + s] = palet[rng.integers(len(palet))]
+
+    img = img + rng.integers(-amp, amp + 1, img.shape)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def test_gamut_query_is_exact():
+    """within_gamut'un iki yolu (dogrudan yayin / RGB kupu) AYNI sonucu vermeli.
+
+    Kup yolu L∞ toplarinin kutu olmasindan, kutu genisletmenin de eksenlere
+    ayrilabilmesinden yararlaniyor; bu esdegerlik bozulursa arka plan kalintisi
+    temizligi sessizce yanlis pikselleri siler."""
+    rng = np.random.default_rng(3)
+    gamut = rng.integers(0, 256, (900, 3)).astype(np.int32)
+    query = rng.integers(0, 256, (400, 3)).astype(np.int32)
+    kaba = np.abs(query[:, None, :] - gamut[None, :, :]).max(axis=2).min(axis=1)
+    for radius in (0, 1, 7, 45, 180):
+        kup = px._gamut_cube(gamut, radius)
+        check(f"gamut kupu yariçap {radius}: yayinla ayni",
+              np.array_equal(kup[query[:, 0], query[:, 1], query[:, 2]], kaba <= radius))
+        check(f"gamut sorgusu yariçap {radius}: yol secimi sonucu degistirmiyor",
+              np.array_equal(px.within_gamut(query, gamut, radius), kaba <= radius))
+
+    check("gamut sorgusu: bos query", px.within_gamut(np.zeros((0, 3), np.int32),
+                                                      gamut, 5).shape == (0,))
+    check("gamut sorgusu: bos gamut",
+          not px.within_gamut(query, np.zeros((0, 3), np.int32), 5).any())
+
+
+def test_high_cardinality_bounded():
+    """Yuksek renk kardinaliteli girdi MAKUL sure/bellek icinde bitmeli.
+
+    Regresyon: `remove_background_remnants` her kopuk parca icin
+    `colors x confirmed x 3` boyutunda tek bir gecici dizi ayiriyordu. `confirmed`
+    = seffaflastirilmis piksellerin TUM ayri renkleri; temiz girdide bir kac tane,
+    sikistirma gurultulu girdide on binlerce. Olculen gercek dosyada 128567 x 71943
+    x 3 int32 = 111 GB'lik tek bir istek cikiyordu: surec 4 GB'a sisip takasa
+    giriyor, CPU %0.4'te kaliyor ve HIC bitmiyordu. Bu sentetik girdi ayni yoldan
+    gecerek fix oncesi 5.7 GB'a ciktigi olculdu.
+
+    Olcum AYRI SUREC'te: (a) takilma testi askiya almasin diye zaman asimi
+    uygulanabilsin, (b) tepe bellek yalnizca arac'a ait olsun."""
+    sure_butcesi = 60.0        # olculen: ~2.5 sn
+    bellek_butcesi = 1.0       # GB; olculen: ~0.32 GB (fix oncesi 5.7 GB)
+
+    img = make_high_cardinality()
+    renk = len(np.unique(px.pack_rgb(img)))
+    check("yuksek kardinalite: girdi gercekten gurultulu", renk > 15000,
+          f"yalnizca {renk} renk — test artik dogru yolu zorlamiyor olabilir")
+
+    olcum = r"""
+import resource, sys, os, contextlib, io
+sys.path.insert(0, sys.argv[3])
+import pixelart_extract as px
+with contextlib.redirect_stdout(io.StringIO()):
+    px.extract(sys.argv[1], sys.argv[2], no_crop=True)
+tepe = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(tepe if sys.platform == "darwin" else tepe * 1024)   # daima bayt
+"""
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "hc.png"), os.path.join(tmp, "out.png")
+        Image.fromarray(img).save(src)
+        basla = time.monotonic()
+        try:
+            sonuc = subprocess.run(
+                [sys.executable, "-c", olcum, src, dst,
+                 os.path.dirname(os.path.abspath(__file__))],
+                capture_output=True, text=True, timeout=sure_butcesi)
+        except subprocess.TimeoutExpired:
+            check(f"yuksek kardinalite: {sure_butcesi:.0f} sn icinde bitiyor", False,
+                  "zaman asimi — arac yine takiliyor")
+            return
+        gecen = time.monotonic() - basla
+
+        if sonuc.returncode != 0:
+            check("yuksek kardinalite: arac hatasiz bitti", False,
+                  (sonuc.stderr or "").strip()[-300:] or f"cikis kodu {sonuc.returncode}")
+            return
+        check(f"yuksek kardinalite: {sure_butcesi:.0f} sn icinde bitiyor",
+              gecen < sure_butcesi, f"{gecen:.1f} sn surdu")
+
+        tepe_gb = int(sonuc.stdout.strip().splitlines()[-1]) / 1e9
+        check(f"yuksek kardinalite: tepe bellek < {bellek_butcesi:.1f} GB",
+              tepe_gb < bellek_butcesi, f"{tepe_gb:.2f} GB kullandi")
+        check("yuksek kardinalite: cikti uretildi", os.path.exists(dst))
+
+
 if __name__ == "__main__":
     import io
     import contextlib
@@ -563,6 +689,8 @@ if __name__ == "__main__":
         test_merge_preserves_edges,
         test_fill_holes_keeps_source_color,
         test_open_enclosed_gaps,
+        test_gamut_query_is_exact,
+        test_high_cardinality_bounded,
         test_helpers,
     ]
     for fn in tests:

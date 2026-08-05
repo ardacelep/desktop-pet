@@ -78,6 +78,70 @@ def unpack_rgb(packed: int) -> tuple[int, int, int]:
     return ((packed >> 16) & 255, (packed >> 8) & 255, packed & 255)
 
 
+def unpack_rgb_array(packed: np.ndarray) -> np.ndarray:
+    """Paketlenmis renk dizisini (N,) -> (N,3) int32 aciyor."""
+    p = np.asarray(packed, dtype=np.int32)
+    return np.stack([(p >> 16) & 255, (p >> 8) & 255, p & 255], axis=-1)
+
+
+# Dogrudan yayin yolunun ayirmasina izin verilen en buyuk gecici eleman sayisi.
+# 2e6 eleman = 24 MB int32; ustunde sabit maliyetli kup yolu kazaniyor.
+_GAMUT_BROADCAST_BUDGET = 2_000_000
+
+
+def _gamut_cube(gamut: np.ndarray, radius: int) -> np.ndarray:
+    """RGB kupunun, `gamut` kumesine L∞ uzakligi `radius`i asmayan noktalari.
+
+    L∞ toplari kutu oldugu icin genisletme EKSENLERE AYRILABILIR: her eksende
+    (2r+1)'lik kayan pencerede en az bir isaretli nokta var mi diye bakmak yeter.
+    Pencere sorgusu prefix toplamla sabit zamanda cikiyor.
+
+    Onemli olan bellek: kup girdiden BAGIMSIZ olarak 16 MB, ara prefix dizisi
+    34 MB. Yani gamut kac renk olursa olsun tavan ayni."""
+    occ = np.zeros((256, 256, 256), dtype=bool)
+    if len(gamut):
+        occ[gamut[:, 0], gamut[:, 1], gamut[:, 2]] = True
+    r = int(np.clip(radius, 0, 255))
+    if r == 0:
+        return occ
+
+    idx = np.arange(256)
+    hi = np.clip(idx + r + 1, 0, 256)   # prefix dizisi 257 uzunlugunda
+    lo = np.clip(idx - r, 0, 256)
+    for axis in (0, 1, 2):
+        pad = list(occ.shape)
+        pad[axis] = 1
+        # eksen uzunlugu 256, dolayisiyla toplam <= 256: uint16 rahat yetiyor
+        cs = np.concatenate([np.zeros(pad, dtype=np.uint16),
+                             np.cumsum(occ, axis=axis, dtype=np.uint16)], axis=axis)
+        occ = np.take(cs, hi, axis=axis) > np.take(cs, lo, axis=axis)
+    return occ
+
+
+def within_gamut(query: np.ndarray, gamut: np.ndarray, radius: int) -> np.ndarray:
+    """`query`deki her rengin `gamut`taki bir renge L∞ uzakligi <= radius mi?
+
+    Iki yol da AYNI sonucu verir; secim yalnizca maliyet icin.
+
+    Dogrudan yayin len(query)*len(gamut)*3 buyuklugunde gecici dizi ayirir.
+    Temiz girdide gamut bir kac renk oldugu icin bu bedava; ama sikistirma
+    gurultulu bir Gemini ciktisinda gamut on binlerce renge cikiyor ve carpim
+    patliyor (olculdu: 128567 renk x 71943 gamut x 3 int32 = 111 GB tek bir
+    gecici dizi — surec 4 GB'a sisip takas'a giriyor, CPU %0.4'te kaliyordu).
+    O yuzden carpim butceyi asinca sabit bellekli kup yoluna geciliyor."""
+    query = np.asarray(query, dtype=np.int32).reshape(-1, 3)
+    gamut = np.asarray(gamut, dtype=np.int32).reshape(-1, 3)
+    if query.size == 0:
+        return np.zeros(0, dtype=bool)
+    if len(gamut) == 0:
+        return np.zeros(len(query), dtype=bool)
+    if len(query) * len(gamut) <= _GAMUT_BROADCAST_BUDGET:
+        return (np.abs(query[:, None, :] - gamut[None, :, :]).max(axis=2).min(axis=1)
+                <= radius)
+    cube = _gamut_cube(gamut, radius)
+    return cube[query[:, 0], query[:, 1], query[:, 2]]
+
+
 def label_components(mask: np.ndarray, connectivity: int = 4):
     """Bagli bilesenleri etiketler. mask: bool (H,W). Donen: (labels int32, adet).
     Etiketler 1'den baslar, 0 = maskenin disi."""
@@ -891,20 +955,27 @@ def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
     if num <= 1:
         return rgba
 
-    confirmed = np.array([unpack_rgb(int(v))
-                          for v in np.unique(pack_rgb(rgba[:, :, :3][~opaque]))],
-                         dtype=np.int32)
+    confirmed = unpack_rgb_array(np.unique(pack_rgb(rgba[:, :, :3][~opaque])))
     sizes = np.bincount(labels.ravel())
     main = int(np.argmax(sizes[1:])) + 1
     wide = tol * 3
-    for lbl in range(1, num + 1):
-        if lbl == main:
-            continue
-        mask = labels == lbl
-        colors = rgba[:, :, :3][mask].astype(np.int32)
-        near = np.abs(colors[:, None, :] - confirmed[None, :, :]).max(axis=2).min(axis=1)
-        if (near <= wide).mean() >= share:
-            rgba[mask] = (0, 0, 0, 0)
+
+    # Gamut sorgusu parca parca degil TEK SEFERDE yapiliyor: hem tekrar eden
+    # renkler bir kez sorulmus oluyor, hem de her etiket icin goruntu boyunda
+    # `labels == lbl` taramasi yapmaktan kurtuluyoruz (gurultulu girdide bilesen
+    # sayisi binlere cikabiliyor).
+    detached = (labels > 0) & (labels != main)
+    if not detached.any():
+        return rgba
+    uniq, inverse = np.unique(pack_rgb(rgba[:, :, :3][detached]), return_inverse=True)
+    near_px = within_gamut(unpack_rgb_array(uniq), confirmed, wide)[inverse]
+
+    lbl_of_px = labels[detached]
+    toplam = np.bincount(lbl_of_px, minlength=num + 1)
+    yakin = np.bincount(lbl_of_px, weights=near_px, minlength=num + 1)
+    sil = yakin / np.maximum(toplam, 1) >= share   # (near <= wide).mean() >= share
+    sil[0] = sil[main] = False
+    rgba[sil[labels]] = (0, 0, 0, 0)
     return rgba
 
 
