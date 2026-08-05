@@ -908,8 +908,56 @@ def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
     return rgba
 
 
-def remove_detached_specks(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
-    """Ana silüetten KOPUK kucuk opak parcalari siler."""
+def _segment_distance(colors: np.ndarray, tones: list[np.ndarray]) -> np.ndarray:
+    """Renklerin, iki dama tonunu birlestiren DOGRU PARCASINA uzakligi.
+
+    Damanin iki karesi arasindaki sinirda olusan karisim pikselleri iki tonun
+    tam ortasinda durur: tonlarin ikisine de uzaktir ama aralarindaki dogru
+    parcasinin uzerindedir. Bir Gemini goruntusunde olculdu — kopuk parilti
+    lekesinin medyan uzakligi 10.9, ayni goruntudeki karakterin medyani
+    179.1. Iki kume arasinda 16 kat fark var, esik bu araliktan seciliyor.
+
+    Bu olcut TEK BASINA kullanilamaz: gri damali bir goruntude karakterin
+    acik gri tonlari da bu dogru parcasina yakin dusuyor ve karakter yeniyor
+    (denendi, dort regresyon testi birden dustu). Burada guvenli, cunku
+    sadece ana silüetten KOPUK bileşenlere uygulaniyor.
+    """
+    if len(tones) < 2:
+        return np.full(len(colors), np.inf)
+    # field.tones demet de olabilir, dizi de
+    t = [np.asarray(x, dtype=np.float64) for x in tones]
+    en_yakin = np.full(len(colors), np.inf)
+    c = colors.astype(np.float64)
+    for i in range(len(t)):
+        for j in range(i + 1, len(t)):
+            a = t[i]
+            b = t[j]
+            ab = b - a
+            uzunluk = float(ab @ ab)
+            if uzunluk < 1e-9:
+                continue
+            oran = np.clip(((c - a) @ ab) / uzunluk, 0.0, 1.0)
+            ayak = a + oran[:, None] * ab
+            en_yakin = np.minimum(en_yakin, np.linalg.norm(c - ayak, axis=1))
+    return en_yakin
+
+
+def remove_detached_specks(rgba: np.ndarray, max_size: int = 12,
+                           tones: list[np.ndarray] | None = None,
+                           tone_tol: float = 25.0) -> np.ndarray:
+    """Ana silüetten KOPUK opak parcalari siler.
+
+    Iki olcut var, ikisi de KOPUK olma sartina bagli:
+
+    1. Kucuk olanlar (max_size alti) — klasik leke temizligi.
+    2. Boyutu ne olursa olsun, rengi dama tonlarinin arasindaki dogru
+       parcasina yapisik olanlar. Bu ikincisi Gemini'nin koseye koydugu
+       parilti (✦) isareti icin gerekli: olculen ornekte 73 piksel, yani
+       leke esiginin cok ustunde, ve rengi (201,0,210) iki dama tonunun tam
+       ortasi. Esigi 73'e cikarmak yanlis olurdu — rig pozlarinda karakterin
+       govdeden kopuk bir eli olabiliyor ve o silinirdi. Renk olcutu bunu
+       ayirt ediyor: ten rengi damaya uzak, parilti degil.
+    """
     rgba = rgba.copy()
     opaque = rgba[:, :, 3] > 0
     labels, num = label_components(opaque, connectivity=8)
@@ -918,8 +966,16 @@ def remove_detached_specks(rgba: np.ndarray, max_size: int = 12) -> np.ndarray:
     sizes = np.bincount(labels.ravel())
     main = int(np.argmax(sizes[1:])) + 1
     for lbl in range(1, num + 1):
-        if lbl != main and sizes[lbl] <= max_size:
+        if lbl == main:
+            continue
+        if sizes[lbl] <= max_size:
             rgba[labels == lbl] = (0, 0, 0, 0)
+            continue
+        if tones:
+            m = labels == lbl
+            d = _segment_distance(rgba[m][:, :3], tones)
+            if float(np.median(d)) <= tone_tol:
+                rgba[m] = (0, 0, 0, 0)
     return rgba
 
 
@@ -1379,7 +1435,8 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     # 4) temizlik — kirpma ONCESI, cunku uzakta kalan tek bir leke kirpma sinirini
     #    gereksiz genisletip karakteri tuvalde kaydiriyor
     if cleanup:
-        rgba = remove_detached_specks(rgba, max_size=speck_size)
+        rgba = remove_detached_specks(rgba, max_size=speck_size,
+                                      tones=field.tones if field is not None else None)
         rgba = fill_interior_holes(rgba, max_size=speck_size)
 
     # 4b) kapali bosluklar. Sirasi kritik: delik doldurmadan SONRA (yoksa hemen
