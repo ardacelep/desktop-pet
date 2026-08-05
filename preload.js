@@ -10,6 +10,15 @@ contextBridge.exposeInMainWorld('petAPI', {
   /** Pencereyi mutlak ekran koordinatına taşı. */
   move: (x, y) => ipcRenderer.send('pet:move', { x, y }),
 
+  /** Pencereyi karakterin boyutuna göre yeniden ölç; yeni bounds'u döner. */
+  resize: (width, height) => ipcRenderer.invoke('pet:resize', { width, height }),
+
+  /**
+   * Pencereyi tıklanabilir (true) ya da tıklama geçirgen (false) yap.
+   * Renderer imleci alfa hit-test'ten geçirip çağırır.
+   */
+  setInteractive: (interactive) => ipcRenderer.send('pet:set-interactive', interactive),
+
   /** Son konumu diske yaz (sürükleme bitince / yürüyüş durunca). */
   persistPosition: () => ipcRenderer.send('pet:persist-position'),
 

@@ -1,7 +1,7 @@
 {
   "displayName": "Ael",
   "nativeFrameSize": 87,
-  "displayHeight": 87,
+  "displayScale": 1,
 
   "idle": {
     "file": "idle_spritesheet.png",

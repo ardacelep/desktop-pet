@@ -1,7 +1,7 @@
 {
   "displayName": "Arkadaş 1",
   "nativeFrameSize": 88,
-  "displayHeight": 88,
+  "displayScale": 1,
 
   "idle": {
     "file": "idle_spritesheet.png",

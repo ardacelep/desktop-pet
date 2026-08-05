@@ -287,7 +287,14 @@ def main(argv=None):
         "frameDuration": args.duration,
     }
     print(f"\nmeta.json icin:\n  \"{args.clip}\": {json.dumps(blok)}")
-    print(f"  \"nativeFrameSize\": {kutu},\n  \"displayHeight\": {kutu}")
+    print(f"  \"nativeFrameSize\": {kutu},\n  \"displayScale\": 1")
+
+    # Ekrandaki boyu belirleyen, kutu degil karakterin KENDI boyu. Kutu capanin
+    # etrafina kare kuruldugu icin kolunu acan karakterde boydan buyuk cikiyor;
+    # iki karakteri kutuya bakarak kiyaslamak yaniltir.
+    boy = max(k.shape[0] for k in kirpik)
+    print(f"\nKarakterin boyu {boy}px; displayScale 1 ile ekranda da {boy}px olacak.")
+    print("Diger karakterlerle kiyaslamak icin: npm run check")
     return 0
 
 

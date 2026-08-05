@@ -22,6 +22,8 @@ Animasyon karelerini **elle yan yana dizme.** Her kare ayrı bir üretim olduğu
 python3 tools/pack_sheet.py kare*.png -o characters/<ad>/walk_right_spritesheet.png --gif onizleme.gif
 ```
 
+Bir karakterin **tüm kliplerini aynı `--box` değeriyle** paketleyin. pack_sheet kutuyu her klip için ayrı hesaplıyor ve idle 86, walk 87 gibi farklı çıkabiliyor; tek bir `nativeFrameSize` tutmak için önce ikisini de box'sız çalıştırıp gereken en büyük değeri görün, sonra ikisini de `--box <o değer>` ile paketleyin.
+
 Gemini animasyonu **tek bir sheet** olarak ürettiyse önce tüm sheet'i çıkar, sonra [tools/split_sheet.py](tools/split_sheet.py) ile böl — tersi değil. Sebebi [README](README.md#gemini-tek-bir-sheet-ürettiyse) içinde.
 
 Ürettiği GIF'i açıp titreme olup olmadığına bak — PR'a da bu GIF'i ekleyebilirsin.
@@ -54,7 +56,7 @@ Gemini animasyonu **tek bir sheet** olarak ürettiyse önce tüm sheet'i çıkar
 - Sheet genişliği tam olarak `frameSize × frameCount` olmalı — 1 piksel şaşarsa animasyon kayar
 - Karakter **sağa** baksın; sola yürüyüş `flip` ile üretiliyor
 - Karakterin ayakları karenin **alt kenarına** otursun, yoksa ekranda havada durur
-- Piksel sanatı ölçeklenirken bulanıklaşır: `displayHeight`'i `nativeFrameSize` ile aynı ya da tam katı tut
+- Ekrandaki boy = karakterin native boyu × `displayScale`, ve `displayScale` **tam sayı**. Varsayılan 1; karakteriniz diğerlerinin yarısı kadar çıktıysa 2 yazın. `npm run check` boyları karşılaştırıp aykırı olanı söyler
 
 Klasör adları için küçük harf + ASCII kullan (`karakter2`, `kedi`). macOS büyük/küçük harfe duyarsız ama Linux (ve CI) duyarlı — `Kedi` ile `kedi` orada iki ayrı klasör olur.
 
@@ -78,6 +80,7 @@ Kod stili: 2 boşluk girinti, tek tırnak, noktalı virgül. Yorumlar Türkçe v
   `Kedi karakteri ekle`, `Yürüme hızını meta.json'a taşı`
 - PR'da karakter eklediysen ekran görüntüsü ya da kısa bir kayıt ekle — sprite'ın gerçekten doğru çizildiğini gözle görmek en hızlı kontrol
 - PR açmadan önce `npm run check` yeşil olsun
+- Uygulama koduna dokunduysan `npm run check:hittest` de yeşil olsun
 
 ## Çakışma çıkarsa
 

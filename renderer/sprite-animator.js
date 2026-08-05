@@ -7,7 +7,10 @@ class SpriteAnimator {
   /** @param {HTMLCanvasElement} canvas */
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    // willReadFrequently: hit-test her mousemove'da getImageData ile canvas'tan
+    // tek piksel okuyor; bu bayrak olmadan Chromium her okumada GPU'dan geri
+    // kopyalama yapıp uyarı basıyor.
+    this.ctx = canvas.getContext('2d', { willReadFrequently: true });
     this.ctx.imageSmoothingEnabled = false;
 
     /** @type {HTMLImageElement | null} */
@@ -75,6 +78,42 @@ class SpriteAnimator {
     );
     ctx.restore();
   }
+}
+
+/**
+ * Bir sheet'teki TÜM karelerin opak piksellerini kapsayan sınır kutusunu ölçer.
+ * Native piksel biriminde döner: { top, bottom, left, right }.
+ *
+ * Üç yerde gerekiyor ve üçü de aynı ölçümden besleniyor:
+ *   - pencereyi karakterin gerçek boyuna göre ölçmek,
+ *   - yürüme sınırlarını kare kutusuna değil karakterin kendisine dayamak
+ *     (kutunun boş kenarı yüzünden pet ekran kenarına varamıyordu),
+ *   - ayakların dock çizgisine tam oturması için alttaki payı bilmek.
+ */
+function measureContent(image, frameSize, frameCount) {
+  const c = document.createElement('canvas');
+  c.width = frameSize * frameCount;
+  c.height = frameSize;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, 0, 0);
+
+  const { data } = ctx.getImageData(0, 0, c.width, c.height);
+  let top = frameSize, bottom = 0, left = frameSize, right = 0;
+
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      if (data[(y * c.width + x) * 4 + 3] === 0) continue;
+      const fx = x % frameSize; // kare içindeki sütun
+      if (y < top) top = y;
+      if (y + 1 > bottom) bottom = y + 1;
+      if (fx < left) left = fx;
+      if (fx + 1 > right) right = fx + 1;
+    }
+  }
+
+  if (bottom === 0) return { top: 0, bottom: frameSize, left: 0, right: frameSize };
+  return { top, bottom, left, right };
 }
 
 /** Sprite sheet'leri önceden yükler. */

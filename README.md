@@ -10,6 +10,7 @@ Pet kendi kendine ekranın altında gezinir, kenara çarpınca döner, sürükle
 - Sprite sheet tabanlı canvas animasyon motoru — piksel sanatı bulanıklaşmadan çizilir
 - Durum makinesi: `IDLE → WALKING → IDLE`, `DRAGGING`, `REACTING`
 - Rastgele gezinme ve ekran kenarında yön değiştirme
+- **Şeffaf alanlar tıklama geçirgen** — pet'in üstünde olmayan tıklamalar altındaki uygulamaya gider
 - Sürükle-bırak; bırakıldığı monitörün çalışma alanına (dock/taskbar üstüne) oturur
 - Tıklayınca konuşma balonu, karaktere özel cümle repertuarından
 - Sağ tık menüsü + sistem tepsisi ikonu
@@ -50,6 +51,7 @@ pet/
 │       └── meta.json
 ├── tools/
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
+│   ├── selftest-hittest.js       # Tıklama geçirgenliği testi (npm run check:hittest)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
 │   ├── split_sheet.py            # Sheet'i tek tek karelere böler
 │   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar
@@ -61,6 +63,26 @@ pet/
 ```
 
 Ana süreç yalnızca pencereyi konumlandırır; pet'in nerede olduğu ve ne yaptığı renderer'daki `Pet` sınıfında tutulur, konum değişiklikleri `pet:move` IPC mesajıyla ana sürece iletilir.
+
+### Tıklama geçirgenliği
+
+Pencere sprite'tan büyük olmak zorunda: konuşma balonuna üstte yer gerekiyor ve kare sprite kutusunun kendi boş kenarı var. Ölçüldüğünde pencerenin yalnızca **%6'sı** gerçekten pet'ti; kalan %94 altındaki uygulamalara giden tıklamaları yutuyordu.
+
+Çözüm, pencerenin tıklama geçirgen **başlaması**:
+
+```js
+win.setIgnoreMouseEvents(true, { forward: true });
+```
+
+`forward: true` sayesinde pencere geçirgenken bile `mousemove` renderer'a ulaşıyor. Renderer her harekette canvas'ın **canlı piksellerini** okuyup imlecin gerçekten opak bir pikselin üstünde olup olmadığına bakıyor ([`isOverSprite`](renderer/pet.js)) ve yalnızca öyleyse pencereyi tıklanabilir yapıyor. Canvas'tan okumak, flip edilmiş yürüyüşte ve animasyonun her karesinde doğru sonucu veriyor — ayrı bir maske tutmaya gerek kalmıyor.
+
+Birkaç piksellik bir pay var: karakter ~40 piksel eninde, kolu birkaç piksel kalınlığında; tam piksel isabeti istemek pet'i yakalamayı zorlaştırırdı. Pay aynı zamanda imleç sprite'a değmeden pencereyi hazır hale getirdiği için hızlı hareket edip hemen tıklayan kullanıcıdaki yarış durumunu da kapatıyor.
+
+Regresyon testi (gerçek fare gerektirmez, sentetik olay enjekte eder):
+
+```bash
+npm run check:hittest
+```
 
 ## Yeni karakter ekleme
 
@@ -74,7 +96,7 @@ Ana süreç yalnızca pencereyi konumlandırır; pet'in nerede olduğu ve ne yap
 {
   "displayName": "Arkadaş 2",
   "nativeFrameSize": 88,
-  "displayHeight": 88,
+  "displayScale": 1,
 
   "idle":       { "file": "idle_spritesheet.png",       "frameSize": 88, "frameCount": 4, "frameDuration": 500 },
   "walk_right": { "file": "walk_right_spritesheet.png", "frameSize": 88, "frameCount": 7, "frameDuration": 120 },
@@ -98,14 +120,27 @@ Karakter, sağ tık menüsündeki **Karakter Değiştir** listesinde otomatik g�
 | Alan | Açıklama |
 | --- | --- |
 | `displayName` | Menüde görünen ad. Yoksa klasör adı kullanılır |
-| `nativeFrameSize` | Sprite dosyasındaki kare boyutu (piksel) |
-| `displayHeight` | Ekranda görünecek boy. Farklı çözünürlüklü karakterleri aynı boyda göstermek için |
+| `nativeFrameSize` | Sprite dosyasındaki kare kutusunun boyutu (piksel) |
+| `displayScale` | Ekran çarpanı, **tam sayı**. Varsayılan 1 = native çözünürlük neyse ekranda o |
 | `flip` | `true` ise kare çizilirken yatay aynalanır — sola yürüyüş için ayrı dosya tutmaya gerek yok |
 | `frameDuration` | Kare başına milisaniye |
 | `walkSpeed` | Yürüme hızı, saniyede piksel |
 | `lines` | Tıklandığında rastgele seçilen cümleler |
 
-`displayHeight` ile `nativeFrameSize` eşit olduğunda piksel sanatı en net görünür; ara ölçekler (ör. 88 → 80) bulanıklaştırır. Ölçek gerekiyorsa tam katlar (176, 44) tercih edin.
+### Farklı native boyuttaki karakterler
+
+Karakterler farklı native çözünürlükte çıkabilir; [pixelart_extract.py](tools/pixelart_extract.py) bilerek sabit bir boyuta zorlamıyor (zorlamak düşük kontrastlı küçük detayları yok ediyordu). Boyut normalizasyonu bu yüzden uygulama katmanında.
+
+Kural basit: **ekrandaki boy = native boy × `displayScale`**, ve `displayScale` her zaman tam sayı. Varsayılan 1, yani native çözünürlük neyse ekranda o. Kesirli ölçek pixel art'ı bulanıklaştırdığı için otomatik hesaplanmıyor — kararı siz veriyorsunuz.
+
+Karşılaştırma ölçütü `nativeFrameSize` **değil**, karakterin gerçek boyu: kutu, çapanın etrafına kare kurulduğu için kolunu yana açan bir karakterde boydan büyük çıkar. `npm run check` her karakterin gerçek boyunu yazar ve aralarında %25'ten fazla fark varsa uyarır:
+
+```
+✓ ael — Ael  (kutu 87, boy 85px × 1 = ekranda 85px)
+✓ karakter1 — Arkadaş 1  (kutu 88, boy 86px × 1 = ekranda 86px)
+```
+
+Karakteriniz diğerlerinin yarısı kadar çıktıysa `"displayScale": 2` yazın. Katı gelmiyorsa (ör. 60px'e karşı 85px) doğru çözüm ölçeklemek değil, sprite'ı daha yüksek ızgara yoğunluğunda yeniden ürettirmek.
 
 ### Kare boyutu neden kare?
 
@@ -204,7 +239,7 @@ Sonunda yapıştırmaya hazır `meta.json` bloğu basılır:
 meta.json icin:
   "walk_right": {"file": "walk_right_spritesheet.png", "frameSize": 95, "frameCount": 7, "frameDuration": 120}
   "nativeFrameSize": 95,
-  "displayHeight": 95
+  "displayScale": 1
 ```
 
 ### Kayıpsızlığı doğrulama
@@ -307,13 +342,11 @@ npm run dist:win
 
 ## Bilinen sınırlar
 
-- Pencere 200×180; pet'in etrafındaki şeffaf alan altındaki uygulamalara giden tıklamaları yutar. `setIgnoreMouseEvents(true, { forward: true })` bunu çözer ama sürükleme mantığını karmaşıklaştırdığı için şimdilik kullanılmadı.
 - Pet yalnızca X ekseninde hareket eder; zıplama/düşme gibi dikey fizik yok.
 - Çoklu monitör: sürükleyip bıraktığında bulunduğu monitöre uyum sağlar, ama kendi başına yürürken monitörler arası geçmez.
 
 ## Yol haritası
 
-- [ ] Şeffaf alanlarda tıklama geçirgenliği
 - [ ] Dikey fizik (zıplama, kenardan düşme)
 - [ ] Yürürken monitörler arası geçiş
 - [ ] Ayarlar penceresi (hız, boyut, konuşma sıklığı)

@@ -5,7 +5,10 @@ const Store = require('electron-store');
 
 const CHARACTERS_DIR = path.join(__dirname, 'characters');
 
-// Pencere sprite'tan biraz büyük: üstte konuşma balonu için yer kalsın.
+// Sprite'ın üstünde konuşma balonuna ayrılan yer. Pencerenin geri kalanı
+// karakterin gerçek boyutundan hesaplanıyor (pet:resize), bunlar yalnızca ilk
+// kare için başlangıç değeri — renderer karakteri yükleyince pencereyi ölçüyor.
+const BUBBLE_HEADROOM = 92;
 const WINDOW_WIDTH = 200;
 const WINDOW_HEIGHT = 180;
 
@@ -44,7 +47,6 @@ function discoverCharacters() {
         folder: dir.name,
         displayName: meta.displayName || dir.name,
         nativeFrameSize,
-        displayHeight: meta.displayHeight ?? nativeFrameSize,
         meta
       });
     } catch (err) {
@@ -132,6 +134,14 @@ function createPetWindow(characterId) {
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
 
+  // Pencere tıklama geçirgen BAŞLAR. Pencerenin ~%94'ü şeffaf (balon için ayrılan
+  // üst şerit, kenar payları, kare kutunun kendi boşluğu) ve bu alan altındaki
+  // uygulamalara giden tıklamaları yutuyordu. `forward: true` sayesinde geçirgen
+  // haldeyken bile mousemove renderer'a ulaşıyor; renderer imleç gerçekten opak bir
+  // pikselin üstüne geldiğinde pet:set-interactive ile pencereyi kısa süreliğine
+  // tıklanabilir yapıyor.
+  win.setIgnoreMouseEvents(true, { forward: true });
+
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   win.on('closed', () => {
@@ -140,6 +150,17 @@ function createPetWindow(characterId) {
 
   return win;
 }
+
+let currentInteractive = false;
+
+/** Renderer'ın alfa hit-test sonucuna göre pencereyi tıklanabilir/geçirgen yapar. */
+function setInteractive(interactive) {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  currentInteractive = interactive;
+  if (interactive) petWindow.setIgnoreMouseEvents(false);
+  else petWindow.setIgnoreMouseEvents(true, { forward: true });
+}
+
 
 function persistPosition() {
   if (!petWindow || petWindow.isDestroyed()) return;
@@ -206,6 +227,12 @@ app.whenReady().then(() => {
   petWindow = createPetWindow();
   createTray();
 
+  // Tıklama geçirgenliği regresyon testi — npm run check:hittest
+  if (process.env.PET_SELFTEST) {
+    petWindow.webContents.once('did-finish-load', () =>
+      require('./tools/selftest-hittest')(petWindow, () => currentInteractive, app));
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) petWindow = createPetWindow();
   });
@@ -221,13 +248,35 @@ app.on('before-quit', persistPosition);
 
 ipcMain.handle('pet:get-config', () => {
   const [x, y] = petWindow.getPosition();
+  const [width, height] = petWindow.getSize();
   return {
     character: resolveActiveCharacter(),
-    window: { x, y, width: WINDOW_WIDTH, height: WINDOW_HEIGHT },
-    workArea: workAreaAt(x + WINDOW_WIDTH / 2, y + WINDOW_HEIGHT / 2),
+    window: { x, y, width, height },
+    workArea: workAreaAt(x + width / 2, y + height / 2),
+    bubbleHeadroom: BUBBLE_HEADROOM,
     platform: process.platform
   };
 });
+
+/**
+ * Pencereyi karakterin gerçek boyutuna göre yeniden ölçer. Karakterler farklı
+ * native çözünürlükte (ve displayScale ile farklı çarpanda) olabildiği için sabit
+ * bir pencere boyutu ya sprite'ı kırpardı ya da gereksiz boşluk bırakırdı.
+ * Alt kenarı sabit tutuyoruz: pet yere basıyor, yukarı doğru büyümeli.
+ */
+ipcMain.handle('pet:resize', (_e, { width, height }) => {
+  if (!petWindow || petWindow.isDestroyed()) return null;
+  const [x, y] = petWindow.getPosition();
+  const [, oldHeight] = petWindow.getSize();
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+
+  petWindow.setBounds({ x, y: y + (oldHeight - h), width: w, height: h });
+  const [nx, ny] = petWindow.getPosition();
+  return { x: nx, y: ny, width: w, height: h };
+});
+
+ipcMain.on('pet:set-interactive', (_e, interactive) => setInteractive(Boolean(interactive)));
 
 ipcMain.handle('pet:get-work-area', (_e, point) => workAreaAt(point.x, point.y));
 
