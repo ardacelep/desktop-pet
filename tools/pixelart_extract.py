@@ -745,8 +745,38 @@ class BackgroundToneField:
         return out
 
 
+def tone_cluster_edge(distance: np.ndarray, min_width: int = 8,
+                      quiet_share: float = 0.0002, limit: int = 200) -> int | None:
+    """Arka plan renk kumesinin nerede bittigini bulur.
+
+    Piksellerin ton alanina uzakliklarinin histogramina bakip ilk GENIS BOSLUGU
+    arar: altinda kalan her uzaklik degerinde piksel var, ustunde uzun bir sessizlik
+    basliyor. Bu bosluk, "arka plan ve karisimlari" ile "karakterin renkleri"
+    arasindaki dogal sinirdir.
+
+    Neden gerekli: dama karelerinin sinirindaki karisim pikselleri tonlardan
+    epeyce uzak olabiliyor. Olculen bir magenta render'inda tonlar (184,0,184) ve
+    (254,1,252) iken sinir pikselleri (210,0,211) civarinda cikti — tonlara 27
+    birim uzak. Kenar seridinden olculen tolerans 8'de kaliyor ve arka planin
+    buyuk parcalari opak kaliyordu. Histogramda ise 34 ile 76 arasi tamamen bos:
+    34 arka planin sonu, 76 karakterin baslangici.
+
+    Sabit bir ust sinir (eskiden 14) bu ayrimi yapamaz, cunku guvenli tolerans
+    tamamen dama renginin karakterin paletine ne kadar uzak oldugua baglidir:
+    magenta damada 36 rahatca guvenliyken, gri damada 4 bile riskli."""
+    h = np.bincount(np.clip(distance.ravel(), 0, limit), minlength=limit + 1)
+    esik = max(1, int(quiet_share * distance.size))
+    dolu = np.flatnonzero(h > esik)
+    if dolu.size < 2:
+        return None
+    for i in range(len(dolu) - 1):
+        if dolu[i + 1] - dolu[i] >= min_width:
+            return int(dolu[i])
+    return None
+
+
 def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
-                                  margin: int = 3, low: int = 3, high: int = 14) -> int:
+                                  margin: int = 3, low: int = 3, high: int = 60) -> int:
     """Arka planin kendi ton referansindan ne kadar saptigini OLCUP tolerans secer.
 
     Sabit bir tolerans ise yaramiyor: olculen render'larda kenar seridinin sapmasi
@@ -764,7 +794,15 @@ def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
     mask[:ring, :] = mask[-ring:, :] = True
     mask[:, :ring] = mask[:, -ring:] = True
     p95 = float(np.percentile(field.distance[mask], 95))
-    return int(np.clip(round(p95) + margin, low, high))
+    olculen = round(p95) + margin
+
+    # Kenar seridi dama sinirlarindaki karisimlari her zaman gormuyor; renk
+    # kumesinin gercek sinirini histogram soyluyor. Ikisinin BUYUGU aliniyor:
+    # serit olcumu tabani, kume siniri tavani belirliyor.
+    kenar = tone_cluster_edge(field.distance)
+    if kenar is not None:
+        olculen = max(olculen, kenar + 1)
+    return int(np.clip(olculen, low, high))
 
 
 def background_to_alpha(small: np.ndarray, field: BackgroundToneField,
