@@ -50,6 +50,7 @@ pet/
 │       ├── walk_right_spritesheet.png
 │       └── meta.json
 ├── tools/
+│   ├── menu.py                   # Tüm araçlar için etkileşimli menü (npm run tools)
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
 │   ├── selftest-hittest.js       # Tıklama geçirgenliği testi (npm run check:hittest)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
@@ -176,6 +177,14 @@ Karakterin **sağa bakıyor** olması gerekir — sola yürüyüş `flip` ile ü
 
 ## AI ile üretilen sprite'ları hazırlama
 
+Bu bölümdeki araçların hepsi tek bir menüden çalıştırılabilir — komutları ve sırayı ezberlemek istemiyorsanız:
+
+```bash
+npm run tools
+```
+
+Menü her adımda çalıştırdığı komutu da ekrana basar, yani aşağıdaki CLI'ı öğrenmenin kısa yolu olarak da kullanılabilir.
+
 Gemini gibi modellerden gelen "pixel art" görselleri doğrudan kullanılamaz: dosya 1024×1024 gelir ama içindeki gerçek pixel art örneğin 100×100'dür (her sanal piksel ~10.24 gerçek piksellik bir blok), üstelik şeffaflık gerçek değildir — arka plana dama deseni **çizilmiştir**.
 
 [tools/pixelart_extract.py](tools/pixelart_extract.py) bunu düzeltir: ızgarayı ondalıklı hassasiyetle tespit edip görseli gerçek çözünürlüğüne indirir ve dama desenini gerçek alfa kanalına çevirir.
@@ -207,6 +216,12 @@ Gemini'ye ne söyleyeceğiniz [PROMPTS.md](PROMPTS.md) içinde — hangi kısıt
 ### Gemini tek bir sheet ürettiyse
 
 Animasyonu tek bir spritesheet olarak ürettirdiyseniz sıra şu — ve **bu sıra önemli**:
+
+Sırayı ve ara dosyaları elle takip etmek istemiyorsanız menüdeki 1 numaralı akış üçünü de doğru sırada çalıştırır:
+
+```bash
+npm run tools
+```
 
 ```bash
 python3 tools/pixelart_extract.py sheet_ham.png sheet_native.png
