@@ -387,6 +387,92 @@ def test_already_native():
           f"cikan {out.shape[1]}x{out.shape[0]}")
 
 
+def test_reencoded_still_looks_upscaled():
+    """Agir yeniden kodlanmis bir render hala "buyutulmus" sayilmali.
+
+    Gercek hata buydu: sikistirma gurultusu her satira sabit bir taban ekleyince
+    medyan/ortalama orani 1'e kayiyor ve gorsel "zaten native" saniliyordu. 5632x704
+    bir sheet bu yuzden hic indirgenmeden, 33 bin renkle kaydedildi. Burada ayni
+    mekanizma sentetik olarak uretiliyor: buyutulmus bir render'a artan siddette
+    gurultu ekleniyor, siniflandirma her seviyede "buyutulmus" kalmali."""
+    sprite, mask = make_sprite(64, 64, seed=11)
+    base = render_like_gemini(sprite, mask, 704)
+    rng = np.random.default_rng(3)
+    for sigma in (0, 2, 4, 6, 8):
+        noisy = np.clip(base.astype(np.float32) + rng.normal(0, sigma, base.shape),
+                        0, 255).astype(np.uint8)
+        ratio = max(px.line_diff_shape(noisy))
+        check(f"gurultulu render (sigma={sigma}) buyutulmus sayiliyor",
+              not px.looks_already_native(noisy), f"oran {ratio:.3f}")
+
+
+def test_shape_ratio_separation():
+    """Bicim orani, iki sinifi belirgin bir boslukla ayirmali.
+
+    Esik (0.7) tek bir dosyaya gore degil, olculen bosluga gore secildi; bu test
+    boslugun kapanmadigini korur. Ayrica MAX indirgemesini sabitler: native bir
+    sprite sheet'te kareler arasi bos seritler yuzunden X orani 0'a duser, o yuzden
+    min() ya da "iki eksen birden" kurali kullanilamaz."""
+    sprite, mask = make_sprite(64, 64, seed=12)
+
+    # native: sprite'i bos seritli bir sheet'e diz (kareler arasi bosluk var)
+    sheet = np.full((64, 64 * 4, 3), 255, np.uint8)
+    for i in range(4):
+        sheet[:, i * 64:i * 64 + 64] = np.where(mask[..., None], sprite, 255)
+    sheet[:, 64 - 8:64] = 255                      # aradaki bos serit
+    rx, ry = px.line_diff_shape(sheet)
+    check("native sheet: bir eksen bos kalsa da native sayiliyor",
+          px.looks_already_native(sheet), f"oranlar ({rx:.3f}, {ry:.3f})")
+    check("native sheet: max indirgemesi sart (min() cok dusuk)",
+          min(rx, ry) < max(rx, ry), f"({rx:.3f}, {ry:.3f})")
+
+    rendered = render_like_gemini(sprite, mask, 704)
+    up = max(px.line_diff_shape(rendered))
+    nat = max(px.line_diff_shape(sheet))
+    check("buyutulmus ile native arasinda >=0.15 bosluk var",
+          nat - up >= 0.15, f"buyutulmus {up:.3f}, native {nat:.3f}")
+
+
+def test_alignment_score_bounded_on_native():
+    """Zaten native bir gorselde hicbir periyot "mukemmel izgara" gibi gorunmemeli.
+
+    Hucrelerin ic bolgesi iki yandan 1'er px kirpildigi icin periyot ~4'un altinda
+    ic bolge TEK piksele duser; tek piksellik bir bolgenin varyansi tanimi geregi
+    sifirdir, yani `alignment_score` sifira bolmeye yaklasip patlar. Olculen ornek:
+    bu koruma yokken zaten native olan dosyalar periyot ~4.1'de 1.3e10'a varan
+    oranlar aliyordu (gercek dosyalarda 1.6e9). Boyle bir skor, izgara aramasinin
+    anlamsiz bir periyoda kilitlenmesi demek."""
+    sprite, mask = make_sprite(88, 88, seed=21)
+    native = np.where(mask[..., None], sprite,
+                      np.array([255, 255, 255], np.uint8)).astype(np.uint8)
+
+    # 1) Olculemeyecek kadar kucuk periyotlar sessizce "0 varyans" degil, inf donmeli
+    av = px.AxisVariance(native, axis=1)
+    for period in (3.2, 3.5, 3.8):
+        phases = np.linspace(0, period, 24, endpoint=False)
+        worst = min(av.variance(period, float(ph)) for ph in phases)
+        check(f"periyot {period}: ic bolge 1px'e dustugunde olcum reddediliyor",
+              not np.isfinite(worst), f"en iyi varyans {worst:.4g}")
+
+    # 2) Ince tarama boyunca skor sinirli kalmali. quality = min(1, oran/20) oldugu
+    #    icin 20 "tam guvenli izgara" demek; native bir gorsel oraya yaklasmamali.
+    best = 0.0
+    for axis in (1, 0):
+        av = px.AxisVariance(native, axis)
+        for period in np.arange(3.2, native.shape[1] / 8.0, 0.02):
+            ratio = av.alignment_score(float(period))[0]
+            if np.isfinite(ratio):
+                best = max(best, ratio)
+    check("native gorselde hizalama skoru sinirli kaliyor", best < 20.0,
+          f"en yuksek oran {best:.4g}")
+
+    # 3) Karsit ornek: koruma gercek izgara tespitini korelemedi mi?
+    rendered = render_like_gemini(*make_sprite(64, 64, seed=21), 704)   # periyot 11.0
+    true_ratio = px.AxisVariance(rendered, axis=1).alignment_score(11.0)[0]
+    check("gercek periyotta skor hala cok yuksek", true_ratio >= 20.0,
+          f"periyot 11.0'da oran {true_ratio:.4g}")
+
+
 def test_grid_detection_precision():
     """Izgara tespiti dogrudan: periyot ve hucre sayisi tam mi?"""
     sprite, mask = make_sprite(100, 100, seed=7)
@@ -558,6 +644,9 @@ if __name__ == "__main__":
         test_local_tones_not_matched_one_to_one,
         test_lattice_covers_full_canvas,
         test_already_native,
+        test_reencoded_still_looks_upscaled,
+        test_shape_ratio_separation,
+        test_alignment_score_bounded_on_native,
         test_cleanup_removes_specks,
         test_noise_floor_measurement,
         test_merge_preserves_edges,

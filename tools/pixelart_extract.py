@@ -176,7 +176,7 @@ class AxisGrid:
         return e[:self.count + 1] if len(e) > self.count + 1 else e
 
 
-def line_diff_shape(arr: np.ndarray) -> tuple[float, float]:
+def line_diff_shape(arr: np.ndarray, noise_pct: float = 5.0) -> tuple[float, float]:
     """Her eksen icin komsu satir/sutun farklarinin MEDYAN/ORTALAMA oranini verir.
 
     Bu oran, farklarin dagiliminin bicimini olcer ve olcekten bagimsizdir:
@@ -185,13 +185,30 @@ def line_diff_shape(arr: np.ndarray) -> tuple[float, float]:
         buyuk). Medyan gurultu seviyesinde kalir, ortalamayi sinirlar yukari ceker,
         oran kucuk cikar.
       - Native bir gorselde (ya da illustrasyonda) boyle bir ayrim yok; dagilim tek
-        tepeli, medyan ile ortalama birbirine yakin, oran 1'e yaklasir."""
+        tepeli, medyan ile ortalama birbirine yakin, oran 1'e yaklasir.
+
+    Oran, GURULTU TABANI cikarildiktan sonra hesaplanir. Agir yeniden kodlanmis bir
+    render'da blok ICI farklar da sifirdan uzaklasir; her satira sabit bir t tabani
+    eklendiginde oran (medyan+t)/(ortalama+t) olur ve t buyudukce 1'e yaklasir —
+    yani gorsel ne kadar bozuksa o kadar "native" gorunur. Bu, buyutulmus bir
+    sheet'in indirgenmeden kaydedilmesine yol acan gercek hataydi: olculen bir
+    dosyada (5632x704, ~171 bin renk) ham oranlar 0.63/0.73 cikip esigi asiyordu,
+    taban cikarilinca 0.52/0.56'ya iniyor. Taban dusuk bir yuzdelikle olculur;
+    medyan gibi tek tepeli bir olcut kullanilamaz, cunku aranan sey tam da
+    medyanin taban seviyesinde olup olmadigidir."""
     a = arr.astype(np.float32)
     out = []
     for axis in (1, 0):
         keep = tuple(i for i in (0, 1, 2) if i != axis)
         d = np.abs(np.diff(a, axis=axis)).mean(axis=keep)
-        out.append(float(np.median(d) / max(float(d.mean()), 1e-6)))
+        if d.size == 0:                     # tek piksel genisliginde eksen
+            out.append(1.0)
+            continue
+        floor = float(np.percentile(d, noise_pct))
+        spread = float(d.mean()) - floor
+        # Taban ile ortalama ayni ise dagilim tek degerli: tek tepeli say.
+        out.append(1.0 if spread <= 1e-6
+                   else max(0.0, float(np.median(d)) - floor) / spread)
     return out[0], out[1]
 
 
@@ -205,10 +222,19 @@ def looks_already_native(arr: np.ndarray, max_shape_ratio: float = 0.7) -> bool:
     "zaten native" sanildi ve 1024x1024'luk bir sheet (gercek cozunurlugu 128x128)
     hic indirgenmeden, 40 bin renkle kaydedildi.
 
-    Yerine olcekten bagimsiz bir bicim olcutu kullaniliyor. 25 gercek dosyada
-    olculdu: buyutulmus olanlar 0.28-0.52 araliginda, native pixel art ve
-    illustrasyonlar 0.85-1.01 araliginda. Esik ikisinin arasindaki bosluga
-    konuldu."""
+    Yerine olcekten bagimsiz bir bicim olcutu kullaniliyor (`line_diff_shape`).
+    53 gercek dosyada olculdu: buyutulmus pixel art 0.14-0.29, agir yeniden
+    kodlanmis iki sheet 0.56-0.59, native pixel art 0.77-1.24, illustrasyon ve
+    fotograf 0.86-0.99. Yani karar sinirinin iki yani 0.586 ile 0.766; esik
+    aradaki bosluga, 0.7'ye konuldu.
+
+    Iki eksenin MAKSIMUMU aliniyor, minimumu ya da "her iki eksen de native
+    gorunmeli" sarti DEGIL. Sebep olculdu: native bir sprite sheet'te kareler
+    arasindaki bos seritler yuzunden komsu sutunlarin yarisindan fazlasi birebir
+    ayni cikiyor, dolayisiyla X orani tam 0.0000 oluyor (24 native dosyanin
+    15'inde). min() ya da "ikisi birden" kurali bu dosyalarin hepsini buyutulmus
+    sanardi. Bir eksenin bos kalmasi normal; karar, icerigi tasiyan eksene
+    birakiliyor."""
     return max(line_diff_shape(arr)) >= max_shape_ratio
 
 
@@ -280,6 +306,24 @@ class AxisVariance:
     Kumulatif toplamlar BIR KEZ hesaplanir, sonra her (periyot, faz) sorgusu sadece
     hucre sayisi kadar islem. Boylece yuzlerce aday izgarayi denemek pratik oluyor."""
 
+    # Bir hucrenin ic bolgesi en az bu kadar piksel olmali. TEK piksellik bir ic
+    # bolgenin varyansi tanimi geregi sifirdir (x^2 - x^2), yani duzlugun kaniti
+    # degil olcum artigidir. Elenmezlerse kucuk periyotlarda TUM hucreler tek
+    # piksele duser, hizali varyans sifir cikar ve `alignment_score` patlar: zaten
+    # native olan dosyalarda periyot ~4 civarinda 1.6e9'a varan sahte oranlar
+    # olculdu (karakter7_88x88.png 4.10'da, karakter8_native.png 4.08'de). Iki
+    # piksellik bir ic bolgenin varyansi ise ancak iki piksel gercekten esitse
+    # sifirdir — bu artik gercek bir duzluk kaniti.
+    MIN_INTERIOR = 2
+
+    # Ic bolgesi elenmeyen hucrelerin orani bunun altina duserse olcum yapilmaz.
+    # `variance` zaten "her faz ayni pikselleri kapsamali" ilkesine dayaniyor; ic
+    # bolge elemesi bu ilkeyi sessizce deliyordu. Periyot 4.1 gibi degerlerde
+    # genislik 1 ile 2 arasinda gidip geldigi icin hucrelerin ancak onda biri
+    # kaliyor ve skor, duz arka plana denk gelen bir avuc hucreden hesaplaniyor:
+    # idle_4frame_spritesheet.png'de 86 hucrenin 8'i kalip oran 3991 cikiyordu.
+    MIN_COVERAGE = 0.5
+
     def __init__(self, arr: np.ndarray, axis: int, row_step: int = 4):
         A = arr.astype(np.float64)
         if axis == 0:
@@ -295,7 +339,12 @@ class AxisVariance:
         """Hucre sinirlarindan 1px iceride kalan bolgelerin agirlikli varyansi.
 
         Hucreler `lattice_edges` ile sayildigi icin her faz ayni pikselleri kapsar —
-        yoksa optimizasyon kapsamayi kucultmeyi "iyilesme" sanardi."""
+        yoksa optimizasyon kapsamayi kucultmeyi "iyilesme" sanardi.
+
+        Iki yanda 1px pay birakildigi icin ic bolge ~periyot-2 piksel genisligindedir;
+        `MIN_INTERIOR` bunun altina duseni eler. Pratik sonuc: yontem periyot ~5'in
+        altinda olcum yapamaz ve olcemedigini inf ile bildirir — eskiden bu araligi
+        sifir varyansli tek piksellerle "mukemmel izgara" diye raporluyordu."""
         if period < 3:
             return float("inf")
         edges = lattice_edges(period, phase, self.size)
@@ -303,10 +352,10 @@ class AxisVariance:
             return float("inf")
         a = np.ceil(edges[:-1] + 1).astype(int)
         b = np.floor(edges[1:] - 1).astype(int)
-        keep = (b > a) & (a >= 0) & (b <= self.size)
-        a, b = a[keep], b[keep]
-        if len(a) < 4:
+        keep = (b - a >= self.MIN_INTERIOR) & (a >= 0) & (b <= self.size)
+        if keep.sum() < 4 or keep.mean() < self.MIN_COVERAGE:
             return float("inf")
+        a, b = a[keep], b[keep]
         count = (b - a)[None, :, None]
         s = self.cumsum[:, b, :] - self.cumsum[:, a, :]
         s2 = self.cumsum2[:, b, :] - self.cumsum2[:, a, :]
@@ -328,9 +377,16 @@ class AxisVariance:
         her sinir gecisini kesiyor — oran yuksek cikar. Yanlis periyotta ikisi de
         sinir kesiyor, oran ~1'de kalir.
 
+        Iki varyanstan biri olculemezse (bkz. `variance`) sonuc "izgaraya dair kanit
+        yok" anlaminda 0 olur. inf/inf'i oldugu gibi birakmak nan uretiyordu; tek
+        tarafi inf olan durum ise sonsuz bir oran — yani en guclu aday — gibi
+        gorunuyordu.
+
         Donen: (oran, faz, hizali varyans)."""
         phase, aligned = self.best_phase(period)
         shifted = self.variance(period, (phase + period / 2) % period)
+        if not (np.isfinite(aligned) and np.isfinite(shifted)):
+            return 0.0, phase, aligned
         return shifted / max(aligned, 1e-6), phase, aligned
 
 
