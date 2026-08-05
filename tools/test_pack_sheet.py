@@ -142,6 +142,83 @@ def test_capa_kutu_ortasinda():
           f"{merkez} -> {ayna_merkez}")
 
 
+def _flip_sicramasi(sheet: np.ndarray, kutu: int, n: int) -> float:
+    """Flip'te govdenin kayacagi mesafe.
+
+    Motor sola yurumeyi ctx.translate(w,0)+scale(-1,1) ile uretiyor, bu x
+    indeksini W-1-x'e goturur. Karelerin ortalama kutle merkezi c ise,
+    aynalandiginda W-1-c'ye gider; sicrama |W-1-2c|.
+    """
+    merkezler = []
+    for h in hucreler(sheet, kutu, n):
+        m = h[:, :, 3] > 0
+        if m.any():
+            _, xs = np.where(m)
+            merkezler.append(float(xs.mean()))
+    return abs(kutu - 1 - 2 * float(np.mean(merkezler)))
+
+
+def test_capa_ilk_kareye_baglanmiyor():
+    """Capa TUM karelerin ortalama kutle merkezi olmali, ilk karenin degil.
+
+    Eskiden capa yalnizca referans karenin sinir kutusu ortasiydi. Yalnizca
+    ilk karede uzanan bir kol varsa capa o kola dogru kayiyor, kutu yanlis
+    yere kuruluyor ve karakter flip'te yana ziplyor. Bu senaryoda olculdu:
+    eski surum 11.04px, duzeltilmis surum 0.04px."""
+    temel = karakter()
+    kol = temel.copy()
+    kol[7:10, 11:16] = (200, 150, 120, 255)      # yalnizca ILK karede
+    kareler = [tuvale_koy(kol, 40, 6, 8)] + [tuvale_koy(temel, 40, 6, 8)] * 3
+    sheet, kutu, _ = ps.pack(kareler)
+    j = _flip_sicramasi(sheet, kutu, 4)
+    check("capa: ilk karedeki kol capayi kaydirmiyor", j <= 0.5, f"{j:.2f}px")
+
+
+def test_kutu_paritesi_artigi_belirliyor():
+    """Kaydirma TAM SAYI olmak zorunda: yarim piksel kaydirmak pixel art'i
+    yeniden ornekler, ki bu araclarda yasak. Dolayisiyla artik hata,
+    (kutu-1)/2 - capa ifadesinin en yakin tam sayiya uzakligi kadar kaliyor
+    -- tek kutuda frac(capa), cift kutuda frac(capa - 0.5).
+
+    Simetrik bir karakterde capa yarim sayiya dustugu icin CIFT kutu tam
+    isabet, TEK kutu 1 piksel artik veriyor. Yani --box verilirken parite
+    capanin ondalik kismina gore secilmeli; bu test o iliskiyi kilitliyor.
+
+    Not: ayna ekseninin (kutu-1)/2 mi kutu//2 mi oldugunu bu karakterle
+    olcemezsiniz. Eski surumdeki iki hata simetrik figurlerde birbirini
+    goturuyor (capa yarim piksel yuksek, eksen yarim piksel dusuk); fark
+    ancak sinir kutusu ortasi ile kutle merkezi ayrisan ASIMETRIK
+    karakterlerde aciga cikiyor. Onu test_capa_ilk_kareye_baglanmiyor
+    olcuyor."""
+    kareler = [tuvale_koy(karakter(), 40, 6, 8)] * 3
+    cift, kutu_c, _ = ps.pack(kareler, box=30)
+    tek, kutu_t, _ = ps.pack(kareler, box=31)
+    jc = _flip_sicramasi(cift, kutu_c, 3)
+    jt = _flip_sicramasi(tek, kutu_t, 3)
+    check("parite: dogru parite sicramayi sifirliyor", jc <= 0.1, f"cift kutu {jc:.2f}px")
+    check("parite: yanlis parite 1 piksel artik birakiyor", jt > 0.5,
+          f"tek kutu {jt:.2f}px — parite iliskisi bozulmus olabilir")
+
+
+def test_uzanan_kol_kutu_tamsayi():
+    """capa ondalikli oldugu icin kutu hesabi da ondalikli cikiyor; tavana
+    yuvarlanmazsa np.zeros patliyor. Yukseklik terimi cogu figurde baskin
+    oldugu icin bu ancak kolu genis uzanan karakterlerde tetikleniyor —
+    yani tam olarak capa-etrafinda-kutu mantiginin var olma sebebi olan
+    durumda."""
+    kareler = []
+    for dx in (0, 3, 6):
+        a = np.zeros((30, 70, 4), np.uint8)
+        a[10:28, 30:40] = (80, 80, 80, 255)                    # govde
+        a[14:18, 5 + dx:min(65 + dx, 70)] = (200, 150, 120, 255)  # uzun kol
+        kareler.append(a)
+    sheet, kutu, _ = ps.pack(kareler)
+    check("uzanan kol: kutu tam sayi", isinstance(kutu, int), f"{type(kutu).__name__}")
+    check("uzanan kol: sheet kare", sheet.shape[0] == kutu, f"{sheet.shape[0]} vs {kutu}")
+    check("uzanan kol: sheet genisligi", sheet.shape[1] == kutu * 3,
+          f"{sheet.shape[1]} vs {kutu * 3}")
+
+
 def test_kare_kutu_ve_sheet_olculeri():
     """Motor kareyi kare varsayiyor; sheet genisligi tam frameSize x frameCount."""
     kareler = [tuvale_koy(karakter(b), 40, 4, 6) for b in (0, 1, 2)]
@@ -223,6 +300,9 @@ if __name__ == "__main__":
         test_ayak_cizgisi_sabit,
         test_govde_merkezi_kaymiyor,
         test_capa_kutu_ortasinda,
+        test_capa_ilk_kareye_baglanmiyor,
+        test_kutu_paritesi_artigi_belirliyor,
+        test_uzanan_kol_kutu_tamsayi,
         test_kare_kutu_ve_sheet_olculeri,
         test_hicbir_renk_degismiyor,
         test_padding_ve_box,

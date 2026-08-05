@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -105,10 +106,11 @@ def best_dx(mask: np.ndarray, ref: np.ndarray, search: int) -> tuple[int, float]
 
 
 def align(frames: list[np.ndarray], align_x: str = "correlate",
-          align_y: str = "bottom") -> tuple[list[tuple[int, int]], list[float], int, int, int]:
+          align_y: str = "bottom") -> tuple[list[tuple[int, int]], list[float], int, int, float]:
     """Her kare icin ortak calisma tuvalindeki (y, x) konumunu hesaplar.
 
-    Doner: (konumlar, ortusme skorlari, tuval yuksekligi, genisligi, capa sutunu)"""
+    Doner: (konumlar, ortusme skorlari, tuval yuksekligi, genisligi, capa sutunu)
+    Capa ONDALIKLI doner; yuvarlamak kaydirmayi hesaplayan yere birakiliyor."""
     kirpik = [tight(f) for f in frames]
     yukseklikler = [k.shape[0] for k in kirpik]
     genislikler = [k.shape[1] for k in kirpik]
@@ -145,8 +147,24 @@ def align(frames: list[np.ndarray], align_x: str = "correlate",
             dx, skor = best_dx(maske, ref_maske, arama)
         konumlar.append((dikey(i), orta(i) + dx))
         skorlar.append(skor)
-    # Capa: referans karenin yatay ortasi. Kutu bunun ETRAFINA kuruluyor.
-    return konumlar, skorlar, H, W, orta(0) + genislikler[0] // 2
+    # Capa: TUM hizalanmis karelerin ortalama kutle merkezi. Kutu bunun
+    # ETRAFINA kuruluyor.
+    #
+    # Neden referans karesi degil: eskiden capa yalnizca ilk karenin sinir
+    # kutusu ortasiydi. Kareler birbirine korelasyonla dogru hizalaniyordu
+    # ama yiginin kutuya yerlesimi tek bir kareye baglanmis oluyordu; ilk
+    # kare temsili degilse butun sheet kayiyordu. Olculdu: karakter1'in
+    # yuruyusunde referans capa 33, karelerin ortalama kutle merkezi 34.42
+    # -- 1.42 piksel sistematik sapma. Ayni seti bu araclarla yeniden
+    # paketlemek flip sicramasini 0.29'dan 1.85 piksele CIKARIYORDU.
+    #
+    # Kutle merkezi, sinir kutusu ortasindan daha saglam: bir karede uzanan
+    # kol sinir kutusunu asimetrik yapar ama govdenin agirligini kaydirmaz.
+    toplam = 0.0
+    for i, k in enumerate(kirpik):
+        _, xs = np.where(k[:, :, 3] > 0)
+        toplam += float(xs.mean()) + konumlar[i][1]
+    return konumlar, skorlar, H, W, toplam / len(kirpik)
 
 
 def pack(frames: list[np.ndarray], align_x: str = "correlate", align_y: str = "bottom",
@@ -168,8 +186,13 @@ def pack(frames: list[np.ndarray], align_x: str = "correlate", align_y: str = "b
     # degistirdiginde yana ziplar. Bir karede uzanan kol sinir kutusunu
     # asimetrik yaptigi icin "sinir kutusunu ortala" bunu garanti etmiyor —
     # olculen bir sette govde merkezi kutu ortasindan 3 piksel kaciyordu.
+    # capa ondalikli oldugu icin gerekli de ondalikli cikiyor; tavana
+    # yuvarlanmazsa kutu float kalir ve np.zeros patlar. Yukseklik terimi
+    # cogu karakterde baskin oldugu icin bu ancak kolu genis uzanan
+    # figurlerde tetikleniyordu -- yani tam olarak capa-etrafinda-kutu
+    # mantiginin var olma sebebi olan durumda.
     yari = max(capa - x0, x1 - capa)
-    gerekli = max(y1 - y0, 2 * yari) + 2 * padding
+    gerekli = int(math.ceil(max(y1 - y0, 2 * yari) + 2 * padding))
 
     kutu = gerekli if box is None else box
     if kutu < gerekli:
@@ -177,7 +200,18 @@ def pack(frames: list[np.ndarray], align_x: str = "correlate", align_y: str = "b
                          f"(capa etrafinda {2 * yari}, yukseklik {y1 - y0}, "
                          f"dolgu {padding})")
 
-    kaydir_x = kutu // 2 - capa
+    # Ayna ekseni (kutu-1)/2, kutu/2 DEGIL. Motor flip'i
+    # ctx.translate(canvas.width, 0) + ctx.scale(-1, 1) ile yapiyor
+    # (sprite-animator.js); bu, x indeksini W-1-x'e goturur. kutu // 2
+    # sadece tek sayi kutularda dogru sonucu veriyordu, cift kutularda
+    # yarim piksellik sabit hata birakiyordu.
+    #
+    # Kaydirma TAM SAYI olmak zorunda: yarim piksel kaydirmak pixel art'i
+    # yeniden ornekler. Dolayisiyla artik hata, hedefin en yakin tam sayiya
+    # uzakligi kadar kaliyor -- tek kutuda frac(capa), cift kutuda
+    # frac(capa - 0.5). --box verilirken pariteyi buna gore secmek artigi
+    # 0.25 pikselin altina indiriyor.
+    kaydir_x = int(round((kutu - 1) / 2.0 - capa))
     kaydir_y = (kutu - (y1 - y0) - padding) - y0 if align_y == "bottom" \
         else (kutu - (y1 - y0)) // 2 - y0
 
