@@ -1,4 +1,4 @@
 {
   "_comment": "Karakterler klasörden otomatik keşfedilir (meta.json içeren her alt klasör). Burada sadece ilk kurulumda hangi karakterle başlanacağı yazar; yeni karakter eklerken bu dosyaya dokunmanıza gerek yok.",
-  "default": "karakter1"
+  "default": "omerhan"
 }

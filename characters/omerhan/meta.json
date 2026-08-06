@@ -1,8 +1,7 @@
 {
-  "displayName": "Arkadaş 1",
+  "displayName": "omerhan",
   "nativeFrameSize": 88,
   "displayScale": 1,
-
   "idle": {
     "file": "idle_spritesheet.png",
     "frameSize": 88,
@@ -11,18 +10,17 @@
   },
   "walk_right": {
     "file": "walk_right_spritesheet.png",
-    "frameSize": 88,
-    "frameCount": 7,
+    "frameSize": 90,
+    "frameCount": 8,
     "frameDuration": 120
   },
   "walk_left": {
     "file": "walk_right_spritesheet.png",
-    "frameSize": 88,
-    "frameCount": 7,
+    "frameSize": 90,
+    "frameCount": 8,
     "frameDuration": 120,
     "flip": true
   },
-
   "walkSpeed": 42,
   "lines": [
     "Selam! 👋",
