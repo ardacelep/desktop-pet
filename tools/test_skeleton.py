@@ -403,10 +403,11 @@ def test_gercek_karakterlerde_degismezler():
         for klip, yon in (("idle", "south"), ("walk_right", "east")):
             if klip not in meta:
                 continue
-            # Sert degismezler yalnizca TEMEL POZDA aranir. Yurume sheet'leri
-            # farkli yollarla uretildi ve kendileri tutarsiz (olculdu: rig'e
-            # oturttuktan sonra bile %60-124 sapma); onlarda yalnizca
-            # "cikarim cokmeden calisti" bekleniyor.
+            # Sert degismezler yalnizca TEMEL POZDA aranir, cunku ONDEN
+            # tespit olculebilir sekilde daha guvenilir: kemik sapmasi idle'da
+            # %0-1, yurumede rig'e oturttuktan sonra %9-25. Fark uzuvlarin
+            # yandan ust uste binmesinden — omuz ve el siluetten okunamiyor.
+            # Yurume karelerinde yalnizca "cikarim cokmeden calisti" bekleniyor.
             temel = klip == "idle"
             k = meta[klip]["frameSize"]
             sh = np.array(Image.open(os.path.join(dizin, meta[klip]["file"]))
@@ -520,9 +521,9 @@ def test_temel_pozda_kemikler_tutarli():
     oynatiyordu) ve profil tahmininin hic tutarli olmamasi.
 
     Olcum yalnizca TEMEL POZ (onden idle) uzerinde: animasyon iskeleti buradan
-    cikarilip pozlar ondan uretiliyor. Yurume sheet'leri olcut DEGIL — farkli
-    yollarla uretildikleri icin kendileri tutarsiz (olculdu: rig'e oturttuktan
-    sonra bile %60-124 sapma)."""
+    cikarilip pozlar ondan uretiliyor. Onden tespit olculebilir sekilde daha
+    guvenilir — kemik sapmasi idle'da %0-1, yurumede rig'e oturttuktan sonra
+    %9-25; fark uzuvlarin yandan ust uste binmesinden geliyor."""
     bakilan = 0
     for ad, meta, dizin in karakterler():
         if "idle" not in meta:
