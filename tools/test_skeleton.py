@@ -47,7 +47,7 @@ def check(name: str, condition: bool, detail: str = ""):
 # ---------------------------------------------------------------------------
 
 def figur(kafa_w=20, kafa_h=24, boyun_w=8, boyun_h=4, govde_w=26, govde_h=26,
-          bacak_w=8, bacak_h=22, ara=6, kol_w=5, tuval=90) -> np.ndarray:
+          bacak_w=8, bacak_h=22, ara=6, kol_w=5, kol_kisa=0, tuval=90) -> np.ndarray:
     """Landmark'lari BILINEN bir onden gorunus figuru.
 
     Boyun cukuru, kalca ayrimi ve iki ayak bilerek olculebilir yerlerde."""
@@ -62,9 +62,11 @@ def figur(kafa_w=20, kafa_h=24, boyun_w=8, boyun_h=4, govde_w=26, govde_h=26,
     kutu(y, boyun_h, boyun_w); y += boyun_h
     govde_y = y
     kutu(y, govde_h, govde_w)
-    # kollar govdenin iki yaninda, ayni yukseklikte
-    kutu(govde_y + 2, govde_h - 2, kol_w, tuval // 2 - govde_w // 2 - kol_w)
-    kutu(govde_y + 2, govde_h - 2, kol_w, tuval // 2 + govde_w // 2)
+    # kollar govdenin iki yaninda. `kol_kisa` kollari govdeden once bitirir —
+    # gercek karakterlerde oldugu gibi (el, kasiktan yukarida kalir).
+    kol_h = govde_h - 2 - kol_kisa
+    kutu(govde_y + 2, kol_h, kol_w, tuval // 2 - govde_w // 2 - kol_w)
+    kutu(govde_y + 2, kol_h, kol_w, tuval // 2 + govde_w // 2)
     y += govde_h
     for dx in (-(ara // 2 + bacak_w), ara // 2):
         kutu(y, bacak_h, bacak_w, tuval // 2 + dx)
@@ -200,6 +202,40 @@ def test_dirsek_kolun_uzerinde():
               f"x={x:.1f}, govde kenari {merkez - govde_yari:.0f}-{merkez + govde_yari:.0f}")
         check(f"dirsek {a.split()[0]}: siluetin icinde", bool(op[int(round(y)), int(round(x))]),
               f"({x:.1f},{y:.1f}) seffaf")
+
+
+def test_el_kolun_bittigi_yerde():
+    """REGRESYON: el yuksekligi kalcadan turetiliyordu (`kalca - %2h`) ve
+    kollar kasiktan once bittiginde noktalar BACAKLARA tasiyordu.
+
+    Kalca dogru olculur olmaz ortaya cikti: mag'de kalca %77'ye oturunca el
+    hizasi %75'e indi, ama mag'in kollari %73'te bitiyor — o satirda siluet
+    artik yalnizca pantolon (bant (31,55)) ve "el" noktalari pacanin kenarina
+    dusuyordu. Simdi el, kolun dis kenarinin uc degerine yakin kaldigi son
+    satirda."""
+    kol_kisa = 10
+    im = figur(kol_kisa=kol_kisa)
+    op = im[:, :, 3] > 0
+    govde_y = 6 + 24 + 4
+    kol_alt = govde_y + 2 + (26 - 2 - kol_kisa) - 1      # kolun son satiri
+    bacak_ust = govde_y + 26
+
+    isk = sk.estimate(im, direction="south")
+    for a in ("RIGHT ARM", "LEFT ARM"):
+        x, y = isk.noktalar[a]
+        check(f"{a}: kolun bittigi satirda", abs(y - kol_alt) <= 2,
+              f"y={y:.1f}, kol {kol_alt}'de bitiyor, bacaklar {bacak_ust}'de basliyor")
+        check(f"{a}: bacaklarin ustunde", y < bacak_ust,
+              f"y={y:.1f} >= bacak ust {bacak_ust}")
+        check(f"{a}: siluetin icinde", bool(op[int(round(y)), int(round(x))]),
+              f"({x:.1f},{y:.1f}) seffaf")
+
+    # Govdenin disinda, yani KOLUN uzerinde olmali
+    merkez, govde_yari = im.shape[1] / 2, 26 / 2
+    check("el: govdenin disinda",
+          all(abs(isk.noktalar[a][0] - merkez) > govde_yari - 1
+              for a in ("RIGHT ARM", "LEFT ARM")),
+          f"{[round(isk.noktalar[a][0], 1) for a in ('RIGHT ARM', 'LEFT ARM')]}")
 
 
 def test_pixellab_formati():
@@ -457,6 +493,7 @@ def main():
         test_ayak_bantlari_konturu_delmiyor,
         test_onden_zincir_caprazlamiyor,
         test_dirsek_kolun_uzerinde,
+        test_el_kolun_bittigi_yerde,
         test_pixellab_formati,
         test_profilde_z_ayiriyor,
         test_bos_ve_bozuk_girdi,

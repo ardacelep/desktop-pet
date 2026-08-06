@@ -147,6 +147,40 @@ def boyun_satiri(opak: np.ndarray, y0: int, y1: int, marj: int = 3) -> int:
     return alt
 
 
+def el_satiri(opak: np.ndarray, omuz_y: int, kalca_y: int, tol: int = 2) -> int:
+    """Elin yuksekligi: kolun dis kenarinin UC degerine yakin oldugu son satir.
+
+    Once el yuksekligi kalcadan turetiliyordu (`kalca - %2h`) ve bu YANLISTI.
+    Kalca dogru olculur olmaz hata ortaya cikti: mag'de kalca %77'ye
+    oturunca el hizasi %75'e indi, ama mag'in kollari %73'te bitiyor —
+    o satirda siluet artik yalnizca PANTOLON (bant (31,55)), dolayisiyla
+    "el" noktalari pacanin kenarina, yani BACAKLARA tasiyordu.
+
+    Kol ile govdeyi kiyaslamak da denendi ve kirilgan cikti: govde
+    genisligini hangi satirdan okudugunuza gore mag'de pay 1-2 piksele
+    dusuyor, faküs'te ise bol pacali pantolon koldan genis oldugu icin olcut
+    hic calismiyor.
+
+    Bunun yerine referanssiz bir olcut kullaniliyor: kollar siluetin en dis
+    noktalarini olusturur, o yuzden dis kenarin KENDI uc degerine `tol`
+    kadar yakin kaldigi son satir kolun bittigi yerdir. Bes karakterde de
+    calisiyor (%73-%79), faküs dahil."""
+    if kalca_y <= omuz_y:
+        return kalca_y
+    satirlar, sol, sag = [], [], []
+    for y in range(int(omuz_y), int(kalca_y) + 1):
+        b = bantlar(opak[y], bosluk=2)
+        if b:
+            satirlar.append(y)
+            sol.append(b[0][0])
+            sag.append(b[-1][1] - 1)
+    if not satirlar:
+        return kalca_y
+    ml, mr = min(sol), max(sag)
+    uygun = [y for y, l, r in zip(satirlar, sol, sag) if l <= ml + tol or r >= mr - tol]
+    return max(uygun) if uygun else kalca_y
+
+
 def goz_satiri(rgba: np.ndarray, y0: int, boyun_y: int,
                esik: int = 225, en_az: int = 2) -> tuple[int, list[tuple[int, int]]] | None:
     """Goz satirini SCLERA'dan (goz aki) olcer; bulunamazsa None.
@@ -323,7 +357,7 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
 
     omuz_y = boyun_y + 0.05 * h
     kalca_ust = kalca_y - 0.04 * h      # eklem, bacaklarin ayrildigi yerin biraz ustu
-    el_y = kalca_y - 0.02 * h
+    el_y = float(el_satiri(opak, int(omuz_y), int(kalca_y)))
 
     def uzuv(ust, uc):
         """Ara eklem (diz/dirsek): olculemiyor, capalar arasinda turetiliyor."""
