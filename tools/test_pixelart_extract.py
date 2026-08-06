@@ -26,6 +26,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pixelart_extract as px  # noqa: E402
+from split_sheet import detect_frames as ss_detect  # noqa: E402
 
 
 PASSED, FAILED = 0, 0
@@ -794,6 +795,56 @@ def make_high_cardinality(w: int = 768, h: int = 768, seed: int = 99,
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def test_kare_kare_farkli_olcek():
+    """REGRESYON: bir Gemini sheet'inde izgara SATIRLARININ her biri farkli
+    piksel olceginde cizilmisti (olculdu: 8.67 / ~8.0 / ~7.3 px blok, yani
+    karakter 70 / 77 / 83 native piksel). Tum sheet icin tek kafes olmadigi
+    icin global tespit haklı olarak reddediyor; tek periyot zorlaninca da
+    satirlarin ikisi yanlis orneklenip karakter bozuluyordu.
+
+    `--per-frame` kareleri once ayirip her birinde AYRI kafes ariyor, sonra
+    ortak bir native boya indiriyor."""
+    kutu, kare = 24, 4
+    tuval_h, tuval_w = 400, 1000
+    tuval = np.zeros((tuval_h, tuval_w, 3), np.uint8)
+    yy, xx = np.meshgrid(np.arange(tuval_h), np.arange(tuval_w), indexing="ij")
+    t0 = np.array([255, 0, 255], np.uint8)
+    t1 = np.array([192, 0, 192], np.uint8)
+    tuval[:] = np.where((((yy // 40) + (xx // 40)) % 2)[..., None] == 0, t0, t1)
+
+    sprite, mask = make_sprite(kutu, kutu, seed=4)
+    # Her kare FARKLI olcekte buyutuluyor — asil kusur bu
+    olcekler = (6, 7, 8, 9)
+    x = 20
+    for i in range(kare):
+        k = olcekler[i]
+        buyuk = np.repeat(np.repeat(sprite, k, 0), k, 1)
+        bm = np.repeat(np.repeat(mask, k, 0), k, 1)
+        h, w = bm.shape
+        alt = tuval[30:30 + h, x:x + w]
+        tuval[30:30 + h, x:x + w] = np.where(bm[..., None], buyuk, alt)
+        x += w + 30
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "s.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(tuval).save(src)
+        try:
+            px.extract(src, dst, no_crop=True, cleanup=False, per_frame=True)
+        except Exception as err:            # noqa: BLE001
+            check("kare kare: cikarim calisti", False, str(err))
+            return
+        out = np.array(Image.open(dst).convert("RGBA"))
+
+    kutular, _, _ = ss_detect(out)
+    check("kare kare: dort kare de bulundu", len(kutular) == kare,
+          f"{len(kutular)} kare")
+    if len(kutular) != kare:
+        return
+    boylar = [y1 - y0 for y0, y1, _, _ in kutular]
+    check("kare kare: kareler ortak boya indirildi",
+          max(boylar) - min(boylar) <= 2, f"boylar {boylar}")
+
+
 def test_sheet_kareleri_kalinti_sanilmiyor():
     """REGRESYON: sprite SHEET'te kareler birbirinden kopuk oldugu icin
     `remove_background_remnants` karakterlerin hepsini (en buyugu haric) "kopuk
@@ -948,6 +999,7 @@ if __name__ == "__main__":
         test_singleton_keeps_supported_detail,
         test_cell_support_measures_source,
         test_single_pixel_highlight_survives_pipeline,
+        test_kare_kare_farkli_olcek,
         test_sheet_kareleri_kalinti_sanilmiyor,
         test_gamut_query_is_exact,
         test_high_cardinality_bounded,

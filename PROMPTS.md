@@ -73,6 +73,28 @@ Asıl ölçüt blok sınırlarının **fazı**: bütün sınırlar aynı kafese 
 
 Yani arka planın düzenli olması yetmiyor; **karakterin** blok kenarlarının hepsi tek bir kafese oturmalı. Bozuk örnekte karakter, kenarları piksel ızgarasına oturtulmadan çizilmişti — çizgili gömlek gibi ince desenler bu riski artırıyor.
 
+### En sinsi kusur: satırdan satıra ölçek kayması
+
+Ölçülen bir sheet'te ızgaranın **her satırı farklı piksel ölçeğinde** çizilmişti:
+
+| Izgara satırı | Blok | Karakterin native boyu |
+| --- | --- | --- |
+| 1 | 8.67px | 70px |
+| 2 | ~8.0px | 77px |
+| 3 | ~7.3px | 83px |
+
+Karakterlerin ekrandaki boyu hepsinde aynıydı (~605px) — değişen şey piksel yoğunluğuydu. Bu yüzden göze hiçbir şey batmıyor; sheet gayet düzgün görünüyor.
+
+Ama tüm sheet için **tek bir kafes yok**. Global tespit haklı olarak reddediyor, tek periyot zorlanınca da üç satırın ikisi yanlış örnekleniyor: gözler lekeye dönüyor, ince desenler tırtıklanıyor.
+
+Çare `--per-frame`: kareler önce ayrılıyor, her birinde ayrı kafes aranıyor (ölçüldü: her karede %100 uyum), sonra hepsi ortak bir native boya indiriliyor.
+
+```bash
+python3 tools/pixelart_extract.py sheet.png native.png --per-frame --merge-colors 10
+```
+
+Hedef boy, kabul edilebilirlerin **en küçüğü**: büyütmek piksel uydurur ve tam da kaçındığımız düzensiz blokları üretir; küçültmek mod örneklemedir, bilgi atar ama uydurmaz. Yine de kayıp gerçek — en iyisi sheet'i yeniden ürettirmek.
+
 ### Kurtarma: `--period`
 
 Düzen biliniyorsa (elinizde native karakter varsa) periyodu elle verebilirsiniz; hücre içi **mod** alındığı için kafes birebir oturmasa da kullanılabilir sonuç çıkıyor:

@@ -1567,12 +1567,146 @@ def load_image(path: str) -> tuple[np.ndarray, np.ndarray | None]:
     return np.array(img.convert("RGB")), None
 
 
+# ---------------------------------------------------------------------------
+# 2b) Kare kare cikarim — her karenin KENDI kafesi varsa
+# ---------------------------------------------------------------------------
+
+def ham_arka_plan(arr: np.ndarray, tol: int = 40) -> np.ndarray | None:
+    """Ham (alfasiz) sheet'te arka plan maskesi. Kare kutularini bulmak icin.
+
+    Kenar seridinden ogrenilen dama tonlarina yakin pikseller arka plan sayilir.
+    Tolerans bilerek gevsek: burada amac dama tonunu HASSAS ayirmak degil,
+    kareler arasindaki bos seridi bulmak."""
+    tones = detect_background_tones(arr, ring=max(2, min(arr.shape[:2]) // 64))
+    if not tones:
+        return None
+    d = np.full(arr.shape[:2], 255, dtype=np.int32)
+    a = arr.astype(np.int32)
+    for t in np.array(tones, dtype=np.int32):
+        np.minimum(d, np.abs(a - t).max(axis=2), out=d)
+    return d <= tol
+
+
+def ham_kare_kutulari(arr: np.ndarray, min_pay: int = 4
+                      ) -> list[tuple[int, int, int, int]]:
+    """Ham sheet'teki kare kutulari, okuma sirasinda (ustten alta, soldan saga)."""
+    bg = ham_arka_plan(arr)
+    if bg is None:
+        return []
+    dolu = ~bg
+
+    def bantlar(m):
+        i = np.flatnonzero(m)
+        if i.size == 0:
+            return []
+        k = np.flatnonzero(np.diff(i) > 1)
+        b = np.concatenate(([i[0]], i[k + 1]))
+        e = np.concatenate((i[k], [i[-1]])) + 1
+        return [(int(x), int(y)) for x, y in zip(b, e) if y - x >= min_pay]
+
+    kutular = []
+    for y0, y1 in bantlar(dolu.any(axis=1)):
+        for x0, x1 in bantlar(dolu[y0:y1].any(axis=0)):
+            kutular.append((y0, y1, x0, x1))
+    if len(kutular) < 2:
+        return kutular
+
+    # Filigran/parilti isaretleri de "dolu bolge" oldugu icin kare sanilıyor.
+    # Olculdu: 8 karelik bir sheet'te 10 kutu bulundu; fazladan ikisi kosedeki
+    # isaretlerdi ve biri 12 piksellik oldugu icin ortak boy secimini (en kucuk)
+    # tamamen bozdu. Medyanin cok altinda kalan kutular eleniyor.
+    # Olcut KUTU ALANI degil DOLU PIKSEL sayisi: kutu, satir bandinin tum
+    # yuksekligini miras aldigi icin kosedeki kucuk bir isaret bile buyuk
+    # gorunuyor ve alan esigini gecebiliyor.
+    dolular = np.array([int(dolu[y0:y1, x0:x1].sum()) for y0, y1, x0, x1 in kutular],
+                       dtype=float)
+    esik = np.median(dolular) * 0.25
+    return [k for k, n in zip(kutular, dolular) if n >= esik]
+
+
+def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
+                      pay: int = 24, gap: int = 2) -> tuple[np.ndarray, list[float], int]:
+    """Her kareyi KENDI izgarasiyla cikarip tek bir native seride dizer.
+
+    NEDEN GEREKLI (olculdu): bir Gemini sheet'inde izgara satirlarinin her biri
+    FARKLI piksel olceginde cizilmisti — 1. satir 8.67px blok (karakter 70 native
+    piksel), 2. satir ~8.0 (77), 3. satir ~7.3 (83). Karakterlerin EKRANDAKI boyu
+    aynidir (~605px), degisen sey piksel yogunlugu.
+
+    Bu durumda tum sheet icin tek bir kafes YOK: global tespit hakli olarak
+    reddediyor ("render cok bozuk"), tek periyot zorlanınca da uc satirin ikisi
+    yanlis ornekleniyor ve karakter bozuluyor (olculdu: goz mavi lekelere
+    dagiliyor, cizgili gomlek tirtiklaniyor).
+
+    Cozum kareleri ONCE ayirip her birinde AYRI kafes aramak. Olculdu: her
+    karede tespit %100 uyum veriyor.
+
+    Kareler farkli native boyda ciktigi icin ortak bir boya indirgeniyor. Hedef
+    EN KUCUK olan: buyutmek piksel uydurur ve tam da kacindigimiz duzensiz
+    bloklari uretir; kucultmek ise mod ornekleme, yani bilgi atar ama uydurmaz."""
+    kutular = ham_kare_kutulari(arr)
+    if len(kutular) < 2:
+        raise ValueError("kare kare cikarim icin kareler ayirt edilemedi — "
+                         "kareler arasinda bos serit var mi?")
+
+    H, W = arr.shape[:2]
+    bg = ham_arka_plan(arr)
+    kesitler, izgaralar, boylar = [], [], []
+    for y0, y1, x0, x1 in kutular:
+        kesit = arr[max(0, y0 - pay):min(H, y1 + pay),
+                    max(0, x0 - pay):min(W, x1 + pay)]
+        gx, gy = detect_grid(kesit)
+        # Karakterin boyu, satir bandindan DEGIL bu hucreden olculuyor: bant
+        # yuksekligi satirdaki en uzun karaktere gore ve hepsi icin ayni, bu da
+        # kisa karelerde native boyu oldugundan buyuk gosterip fazladan
+        # kucultmeye yol aciyordu.
+        dolu_satir = int((~bg[y0:y1, x0:x1]).any(axis=1).sum())
+        kesitler.append(kesit)
+        izgaralar.append((gx, gy))
+        boylar.append(dolu_satir / gy.period)          # bu karenin native boyu
+
+    # Hedef, KABUL EDILEBILIR boylarin en kucugu. Dogrudan min() almak kirilgan:
+    # tespiti kacan tek bir kare tum sheet'i onun boyuna indirirdi.
+    med = float(np.median(boylar))
+    makul = [b for b in boylar if 0.6 * med <= b <= 1.6 * med] or boylar
+    hedef = min(makul)
+    log(f"  kare kare: native boylar {[round(b) for b in boylar]} -> hedef {hedef:.0f}")
+
+    kareler = []
+    for kesit, (gx, gy), boy in zip(kesitler, izgaralar, boylar):
+        p = gy.period * (boy / hedef)                 # hedefe goturen periyot
+        if abs(boy - hedef) < 0.5:                    # zaten hedefte: dokunma
+            p = gy.period
+        # Faz DEGISMIYOR: hedef kafes, karenin kendi blok baslangiciyla ayni
+        # yerden baslamali. Yeni periyot icin fazi varyansla yeniden aramak
+        # denendi ve olculebilir sekilde kotulesti (94 -> 96 renk, yuzde
+        # gozle gorulur bulaniklik) — varyans en aza inerken kafes blok
+        # sinirlarindan kayiyor.
+        fx, fy = gx.phase, gy.phase
+        g2x = AxisGrid(p, fx, len(lattice_edges(p, fx, kesit.shape[1])) - 1, 1.0)
+        g2y = AxisGrid(p, fy, len(lattice_edges(p, fy, kesit.shape[0])) - 1, 1.0)
+        kareler.append(downsample_by_mode(kesit, g2x, g2y, center_ratio=center_ratio))
+
+    yuk = max(k.shape[0] for k in kareler)
+    gen = sum(k.shape[1] for k in kareler) + gap * (len(kareler) - 1)
+    # bos seridin rengi dama tonu olmali ki sonraki adimlar onu arka plan saysin
+    dolgu = kareler[0][0, 0]
+    serit = np.zeros((yuk, gen, 3), dtype=np.uint8)
+    serit[:, :] = dolgu
+    x = 0
+    for k in kareler:
+        serit[:k.shape[0], x:x + k.shape[1]] = k
+        x += k.shape[1] + gap
+    return serit, boylar, round(hedef)
+
+
 def extract(input_path: str, output_path: str, preview_path: str | None = None,
             preview_scale: int = 8, bg_tol: int | None = None, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
             cleanup: bool = True, verify: bool = False,
-            fill_gaps: int = 0, period: float | None = None) -> Image.Image:
+            fill_gaps: int = 0, period: float | None = None,
+            per_frame: bool = False) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
@@ -1587,6 +1721,18 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
         gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
         small = arr.copy()
+    elif per_frame:
+        small, boylar, hedef = extract_per_frame(arr, center_ratio=center_ratio)
+        gx = AxisGrid(period=1.0, phase=0.0, count=small.shape[1], quality=1.0)
+        gy = AxisGrid(period=1.0, phase=0.0, count=small.shape[0], quality=1.0)
+        upscaled = False
+        print(f"Kare kare cikarim: {len(boylar)} kare, native boylar "
+              f"{[round(b) for b in boylar]} -> ortak {hedef}")
+        if max(boylar) - min(boylar) > 0.05 * min(boylar):
+            print(f"UYARI: kareler farkli piksel olceginde cizilmis "
+                  f"({round(min(boylar))}-{round(max(boylar))} native piksel). "
+                  f"Ortak boya indirgendi, ama en iyisi sheet'i yeniden urettirmek.",
+                  file=sys.stderr)
     elif period:
         # Render kafese tam oturmadiginda tespit HAKLI olarak reddediyor; ama
         # duzen biliniyorsa (ornegin native karakter boyu elde varsa) periyot
@@ -1762,6 +1908,10 @@ def main(argv=None):
                         help="Izgara periyodunu ELLE ver (blok kenari, piksel). Tespit "
                              "'render cok bozuk' deyip durduysa kullanin: periyot = "
                              "sheet'teki karakter yuksekligi / native yukseklik.")
+    parser.add_argument("--per-frame", action="store_true",
+                        help="Her kareyi KENDI izgarasiyla cikarir. Gemini kareleri\n"
+                             "farkli piksel olceginde cizdiyse (global tespit 'render cok\n"
+                             "bozuk' diyorsa) bunu deneyin.")
     parser.add_argument("--debug-dir", help="Ara adimlari bu klasore yazar (izgara katmani dahil)")
     parser.add_argument("--verify", action="store_true",
                         help="Cikarimin kayipsizligini olcup raporlar: izgara oturmasi, "
@@ -1776,7 +1926,8 @@ def main(argv=None):
                 center_ratio=args.center_ratio, debug_dir=args.debug_dir,
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
                 cleanup=not args.no_cleanup, verify=args.verify,
-                fill_gaps=args.fill_gaps, period=args.period)
+                fill_gaps=args.fill_gaps, period=args.period,
+                per_frame=args.per_frame)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1
