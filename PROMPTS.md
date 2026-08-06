@@ -321,6 +321,10 @@ DÜZEN — (A) İLE BİREBİR AYNI
 ARKA PLAN
 - (A)'daki dama (checkerboard) desenini aynen koru: renkleri TAM OLARAK
   #FF00FF ve #C000C0, kare boyutu da (A)'daki kadar.
+- DAMA SENİN CETVELİN: bir dama karesi TAM OLARAK 8 karakter pikseli
+  genişliğindedir. Karakterin her piksel bloğu bu ızgaraya oturmalı — blok
+  kenarları dama karelerinin kenarlarıyla hizalı olsun. Karakteri damadan
+  bağımsız, serbest elle çizme.
 - Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
 - Dama tüm görsel boyunca AYNI iki renkte kalsın; gradyan, gölge, vinyet ya da
   renk kayması EKLEME.
@@ -408,6 +412,10 @@ DÜZEN — (A) İLE BİREBİR AYNI
 ARKA PLAN
 - (A)'daki dama (checkerboard) desenini aynen koru: renkleri TAM OLARAK
   #FF00FF ve #C000C0, kare boyutu da (A)'daki kadar.
+- DAMA SENİN CETVELİN: bir dama karesi TAM OLARAK 8 karakter pikseli
+  genişliğindedir. Karakterin her piksel bloğu bu ızgaraya oturmalı — blok
+  kenarları dama karelerinin kenarlarıyla hizalı olsun. Karakteri damadan
+  bağımsız, serbest elle çizme.
 - Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
 - Dama tüm görsel boyunca AYNI iki renkte kalsın; gradyan, gölge, vinyet ya da
   renk kayması EKLEME.
@@ -453,6 +461,27 @@ büyütüp küçültme; sadece göğüs/omuz hattı kayacak.
 ```
 
 Tuzak şu: "nefes alma" belirsiz tarif edilirse Gemini nefes hissi yerine tüm karakteri büyütüp küçültüyor. Piksel cinsinden kesin talimat şart — hangi hattın kaç piksel kayacağı yazılmalı.
+
+## Kabul kriteri: önce ölç, sonra düzenle
+
+**En önemli pratik kural bu.** Ölçüldü: aynı prompt ve aynı referansla yapılan iki üretimden biri 93.2 ızgara skoru aldı, diğeri 1.8. Prompt değişmedi, referans değişmedi — değişen sadece üretim kumasıydı. Yani hiçbir prompt bunu garanti etmiyor; **gelen dosyayı ölçüp kötüyse yeniden ürettirmek** en güvenilir yol.
+
+Ölçüm bir komut:
+
+```bash
+python3 tools/pixelart_extract.py sheet.png native.png
+```
+
+Çıktıdaki `uyum` satırına bakın:
+
+| Uyum | Ne yapmalı |
+| --- | --- |
+| %90+ | Kullanın |
+| %50-90 | Kullanılabilir, ama yüzü/detayı gözle kontrol edin |
+| %50 altı | **Yeniden ürettirin.** Araç zaten "izgara uyumu dusuk" diye uyarır |
+| Hata verir | Yeniden ürettirin |
+
+Yeniden ürettirmek saniyeler sürüyor; bozuk bir sheet'i kurtarmaya çalışmak saatler. Ölçülen bir vakada %17 uyumlu bir idle sheet'i hiçbir yöntemle temiz çıkmadı — `--period`, `--per-frame`, `--like-ref`, farklı örnekleme; hiçbiri kurtarmadı, çünkü karakterin kendisi piksel ızgarasına oturtulmamıştı.
 
 ## 5. Üretim sonrası kontrol listesi
 
