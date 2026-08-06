@@ -56,9 +56,11 @@ pet/
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
 │   ├── split_sheet.py            # Sheet'i tek tek karelere böler
 │   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar
+│   ├── grid_ref.py               # Bitmiş sheet'i Gemini'ye ızgara referansı yapar
 │   ├── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
 │   ├── test_split_sheet.py       # Bölücünün regresyon testleri
-│   └── test_pack_sheet.py        # Hizalayıcının regresyon testleri
+│   ├── test_pack_sheet.py        # Hizalayıcının regresyon testleri
+│   └── test_grid_ref.py          # Izgara referansının regresyon testleri
 ├── assets/                 # Ham/orijinal sprite dosyaları (uygulama bunları okumaz)
 └── DESKTOP_PET_PLAN.md     # Mimari plan notları
 ```

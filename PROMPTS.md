@@ -14,13 +14,14 @@ Araçların ne yaptığı: [README](README.md#ai-ile-üretilen-spriteları-hazı
 | **Çerçeve, kare numarası, etiket, yer gölgesi yok** | Hepsi opak piksel; kareye yapışır ya da bölmeyi bozar | ✗ |
 | Dama rengi karakterde **hiç bulunmayan** bir renk olmalı | Ölçüldü: gri damada saf beyaz karakter pikselleri yeniyor, magenta damada yenmiyor | kısmen |
 | Blok kenarları **keskin** olmalı, yeniden sıkıştırma olmamalı | Yeterince bozulmuş bir render'da ızgara hiç bulunamıyor ve `pixelart_extract` hata verip duruyor | ✗ |
-| **Parıltı (✦), filigran, imza yok** | Ölçüldü: köşeye konan parıltı 73 piksel, leke eşiğinin çok üstünde — sprite'a karışıyor | kısmen |
+| Filigranın **karakterin üstüne gelmemesi** | Yasaklamak işe yaramıyor; karaktere değerse ne leke ne renk ölçütü ayırt edebiliyor. Çare düzende sağ alt hücreyi boş bırakmak | ✗ |
+| Karakter **dış kenara değmemeli** | Dama tonları tam o kenar şeridinden öğreniliyor; değerse karakterin konturu "dama tonu" sanılıyor | ✗ |
 | Karakterin canvas'ta ortalı olması | `pack_sheet` zaten içerikten hizalıyor | ✓ |
 | Kareler arası aynı taban çizgisi | `pack_sheet` ayak çizgisine hizalıyor | ✓ |
-| Kenar boşluğu miktarı | Kırpma hallediyor | ✓ |
+| Kareler arası boşluk miktarı | Kırpma ve hizalama hallediyor | ✓ |
 | Beyaz/krem kıyafet yasağı | Magenta damayla ölçülen kayıp sıfır — kısıt artık gereksiz | ✓ |
 
-Yani prompt'ta yer alması gereken şey, üstteki yedi satır. Alttaki dördü eskiden zorunluydu, artık değil; "canvas'ın %85'ini doldurmalı" ya da "beyaz ayakkabı kullanma" gibi maddeleri prompt'a koymak sadece Gemini'nin dikkatini dağıtır.
+Yani prompt'ta yer alması gereken şey, üstteki sekiz satır. Alttaki dördü eskiden zorunluydu, artık değil; "canvas'ın %85'ini doldurmalı" ya da "beyaz ayakkabı kullanma" gibi maddeleri prompt'a koymak sadece Gemini'nin dikkatini dağıtır.
 
 ## Dama rengi: gri değil, magenta
 
@@ -214,13 +215,33 @@ olduğu anlaşılsın.
 
 ## 3. Hazır sheet üzerinde karakter değiştirme (walk için önerilen yol)
 
-Yukarıdaki "sıfırdan walk cycle" prompt'u Gemini'de güvenilir sonuç vermiyor: model yürüyüş döngüsünün ayna-simetrik pozlarını tutturamıyor, çoğu denemede aynı pozu tekrarlıyor. Daha iyi çalışan yol, **pozu üretmeyi modelden almak**: animasyonu doğru olan hazır bir sprite sheet'i poz referansı olarak verip yalnızca karakteri değiştirtmek.
+Sıfırdan walk cycle üretimi Gemini'de güvenilir değil: model ayna-simetrik pozları tutturamıyor, çoğu denemede aynı pozu tekrarlıyor. Çalışan yol, **pozu üretmeyi modelden almak** — animasyonu doğru olan hazır bir sheet'i poz referansı verip yalnızca karakteri değiştirtmek.
 
-Bu yöntemin iki şartı var. Birincisi, referans sheet'in kare sayısı ve düzeni sizin istediğinizle aynı olmalı. İkincisi — ve asıl tökezleten yer — **çıktıyı ızgara olarak istemek**: referans sheet'ler genelde tek sırada gelir, Gemini de aynı düzeni taklit eder ve elinize kullanılamayacak kadar geniş bir görsel gelir.
+### Önce referansı ızgaraya çevirin
+
+Referansı **şerit** verip çıktıyı **ızgara** istemek ölçülebilir şekilde kötü sonuç veriyor: model aynı anda hem yeniden dizmek hem karakter değiştirmek zorunda kalıyor ve poza ayırdığı dikkat azalıyor — bir denemede alt satırdaki dört kare birbirinin neredeyse aynısı çıktı. Referansı zaten istediğiniz düzende verin, o yükü ortadan kaldırın:
+
+```bash
+python3 tools/grid_ref.py characters/ael/walk_right_spritesheet.png -o izgara_referans.png
+```
+
+Araç üç şeyi birden hallediyor: kareleri ızgaraya diziyor, magenta damayı çiziyor ve **sağ alt hücreyi boş bırakıyor** (nedeni aşağıda). 8 kare için 3×3 seçiyor, dokuzuncu hücre boş kalıyor.
+
+### Filigran: engellenemiyor, yeri ayarlanabiliyor
+
+"Filigran ekleme" denmesine rağmen Gemini köşeye parıltı (✦) işaretini koyuyor. Ölçülen bir üretimde tam karakterin şortunun üzerine geldi ve orada **kurtarılamaz**: kopuk olmadığı için leke temizliği yakalayamıyor, rengi de karakterin gri tonlarıyla aynı ailede olduğu için renk ölçütü ayırt edemiyor.
+
+Yasaklamak işe yaramadığına göre kalan yol yerini yönetmek. Filigran **sağ alta** düşüyor, o yüzden düzen sağ alt hücre boş kalacak şekilde seçiliyor — işaret boş arka plana düşüyor ve çıkarımda zararsız kalıyor.
+
+### Dış kenar payı da şart
+
+Kareler arasındaki boşluk yetmiyor, **ızgaranın dışında da** pay gerekiyor. Ölçüldü: bir Gemini çıktısında karakterlerin ayakları tuvalin alt kenarına değiyordu (alt 8 piksellik şeridin %28'i karakter). `pixelart_extract` dama tonlarını tam o kenar şeridinden öğrendiği için ayakkabı konturu `#000000` üçüncü bir "dama tonu" sanıldı, tolerans 3 yerine 60 seçildi ve karakter yendi — çıktı 26×15'e düştü. Alta pay eklenince aynı dosyada tonlar düzeldi.
+
+### Prompt
 
 ```
 Sana İKİ referans veriyorum:
-  (A) POZ REFERANSI — animasyonu doğru olan hazır bir sprite sheet.
+  (A) POZ REFERANSI — animasyonu doğru olan, IZGARA düzeninde bir sprite sheet.
   (B) KARAKTER REFERANSI — kullanmanı istediğim karakter.
 
 GÖREV
@@ -233,17 +254,14 @@ DEĞİŞTİR. Yani iskelet/hareket (A)'dan, görünüm (B)'den gelecek.
   birebir taşınacak.
 - (A)'daki karakterin kıyafetinden, saç renginden, vücut oranından HİÇBİR ŞEY
   sızmayacak. (A) yalnızca poz kaynağı.
-- Kare sayısı (A) ile AYNI olacak; kare ekleme, çıkarma, sıra değiştirme.
 
-DÜZEN — DİKKAT, REFERANSTAN FARKLI
-(A)'da kareler tek sırada olsa bile, SEN çıktıyı IZGARA olarak diz:
-- [2] satır x [4] sütun.
-- Sıra korunacak: (A)'nın 1. karesi senin SOL ÜST karen. Sonra soldan sağa
-  ilerle; satır bitince alt satırın en soluna geç.
-- Kareler arasında ve ızgaranın dışında, KARAKTERE AİT HİÇBİR PİKSEL OLMAYAN,
-  tamamen arka plan olan boş şeritler bırak. Şerit genişliği bir karenin en az
-  onda biri kadar olsun.
-- Canvas kareye yakın olsun. Tek sırada UZUN bir görsel ÜRETME.
+DÜZEN — (A) İLE BİREBİR AYNI
+- (A)'nın ızgara düzenini AYNEN koru: aynı satır sayısı, aynı sütun sayısı,
+  aynı kare sırası. Yeniden dizme, sıkıştırma, tek sıraya alma YOK.
+- (A)'da BOŞ olan hücreyi BOŞ BIRAK. Oraya kare koyma, karakter çizme.
+- Kareler arasındaki boşluklar ve ızgaranın DIŞINDAKİ kenar payı (A)'daki
+  kadar kalsın. Karakterin hiçbir pikseli tuvalin dış kenarına DEĞMESİN.
+- Canvas (A) ile aynı en-boy oranında olsun.
 - Çerçeve, ayırıcı çizgi, kare numarası, etiket ya da yazı EKLEME.
 
 ÖLÇEK — EN KRİTİK MADDE
@@ -256,12 +274,11 @@ DÜZEN — DİKKAT, REFERANSTAN FARKLI
 - Karakter SAĞA baksın (sola yürüyüş bizde aynadan üretiliyor).
 
 ARKA PLAN
-- Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri TAM
-  OLARAK #FF00FF ve #C000C0 olsun. (A)'nın arka planı ne olursa olsun.
+- (A)'daki dama (checkerboard) desenini aynen koru: renkleri TAM OLARAK
+  #FF00FF ve #C000C0, kare boyutu da (A)'daki kadar.
 - Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
 - Dama tüm görsel boyunca AYNI iki renkte kalsın; gradyan, gölge, vinyet ya da
   renk kayması EKLEME.
-- Dama karesinin kenarı, karakterin piksel bloğunun tam katı olsun.
 
 ÇİZİM KURALLARI
 - Gerçek pixel art: her piksel bloğu TEK düz renk, kenarları keskin.
@@ -271,19 +288,26 @@ ARKA PLAN
   olduğu anlaşılsın.
 - Kolla gövde arasında 1-2 piksellik minik boşluklar bırakma: kol ya gövdeye
   değsin ya da arada en az 4 piksellik net açıklık olsun.
-- Yer gölgesi, zemin çizgisi ÇİZME. Parıltı (✦, ✨), imza, filigran EKLEME.
+- Yer gölgesi, zemin çizgisi ÇİZME.
+
+Bir filigran/imza eklemen gerekiyorsa SAĞ ALTTAKİ BOŞ HÜCREYE koy; hiçbir
+karakterin üzerine gelmesin.
 
 Çıktıyı PNG olarak ver. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale
 filtresi uygulama.
 ```
 
-`[2] satır x [4] sütun` kısmını kare sayınıza göre doldurun — tablo [Düzen](#düzen-ızgara-tek-sıra-değil) bölümünde.
+Son madde bilinçli: filigranı yasaklamak çalışmadığı için yasaklamak yerine **yer gösteriliyor**. Boş hücre zaten o iş için ayrılmış durumda.
 
-Gemini kareleri birbirine yapışık dizerse aralarında boş şerit kalmaz ve otomatik bölme çalışmaz. Bu durumda ızgara ölçüsünü elle verin; menüde 3. adımda "Kareler arasında boşluk var mı?" sorusuna hayır deyin, ya da doğrudan:
+### Gelen dosyada kontrol edilecekler
+
+Kareler yapışık gelirse otomatik bölme çalışmaz; ızgara ölçüsünü elle verin (menüde 3. adımda "Kareler arasında boşluk var mı?" sorusuna hayır, ya da doğrudan):
 
 ```bash
-python3 tools/split_sheet.py sheet_native.png -o kareler/ --rows 2 --cols 4 --preview bolme.png
+python3 tools/split_sheet.py sheet_native.png -o kareler/ --rows 3 --cols 3 --preview bolme.png
 ```
+
+Boş hücre kare sayısını bir fazla gösterir mi? Göstermez — boş hücrede opak piksel olmadığı için `split_sheet` onu kare saymaz. Ama filigran oraya düştüyse **sayar**; o zaman `--frames` ile beklenen sayıyı verip fazladan çıkanı silin.
 
 ## 4. Idle spritesheet (4 kare, 2×2)
 

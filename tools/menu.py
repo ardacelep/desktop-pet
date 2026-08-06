@@ -410,6 +410,23 @@ def akis_tam() -> None:
     print("  kopyala, sonra doğrulamak için bu menüden 6'yı çalıştır.")
 
 
+def adim_grid_ref() -> None:
+    """Bitmis sheet -> Gemini'ye verilecek izgara referansi."""
+    print("\n— Izgara referansı üret (grid_ref.py) —")
+    print("  Bitmiş bir sprite sheet'i Gemini'ye poz referansı olarak verilecek")
+    print("  ızgaraya çevirir: magenta dama, kenar payı, ve sağ alt hücre BOŞ")
+    print("  (Gemini filigranı oraya düşsün, karakterin üstüne gelmesin).")
+    sheet = dosya_sor("Bitmiş sprite sheet PNG (şeffaf arka planlı)")
+    cikti = temizle(sor("Çıktı PNG",
+                        kisalt(os.path.splitext(sheet)[0] + "_izgara_ref.png")))
+    hedef = sayi_sor("Hedeflenen çıktı kenarı (px)", "2048")
+
+    if arac("grid_ref.py", sheet, "-o", cikti, *secenek("--target", hedef)):
+        print(f"\n✓ Bitti: {kisalt(cikti)}")
+        print("  Bunu karakter referansıyla birlikte Gemini'ye ver —")
+        print("  prompt PROMPTS.md'de 3. bölümde.")
+
+
 def adim_rig() -> None:
     """Tek kareden kukla kurup yeni pozlar üretir."""
     print("\n— Poz üret (rig_pose.py) —")
@@ -444,7 +461,8 @@ def adim_check() -> None:
 def adim_test() -> None:
     """Araçların kendi regresyon testleri."""
     print("\n— Araç testleri —")
-    for dosya in ("test_pixelart_extract.py", "test_split_sheet.py", "test_pack_sheet.py"):
+    for dosya in ("test_pixelart_extract.py", "test_split_sheet.py",
+                  "test_pack_sheet.py", "test_grid_ref.py"):
         if not arac(dosya):
             print(f"\n✗ {dosya} başarısız.")
             return
@@ -460,6 +478,7 @@ MENU = [
     ("Pixel art çıkar", "pixelart_extract", adim_extract),
     ("Sheet'i karelere böl", "split_sheet", lambda: adim_split()),
     ("Kareleri hizala/paketle", "pack_sheet", lambda: adim_pack()),
+    ("Izgara referansı üret (Gemini için)", "grid_ref", adim_grid_ref),
     ("Poz üret", "rig_pose", adim_rig),
     ("Karakterleri doğrula", "check-characters", adim_check),
     ("Araç testlerini çalıştır", "test:tools", adim_test),
