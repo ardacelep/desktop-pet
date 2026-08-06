@@ -315,8 +315,25 @@ def adim_split() -> str | None:
                          kisalt(os.path.splitext(sheet)[0] + "_kareler")))
     kare_sayisi = sayi_sor("Beklenen kare sayısı")
 
-    if arac("split_sheet.py", sheet, "-o", klasor, *secenek("--frames", kare_sayisi)):
+    # Otomatik bulma kareler arasindaki BOS seride dayaniyor. Sikisik bir izgarada
+    # kareler birbirine degebiliyor; o zaman tek care esit bolme. Bunu menude
+    # sormazsak kullanicinin CLI'a dusmesi gerekiyordu.
+    satir = sutun = ""
+    if not evet_mi("Kareler arasında boşluk var mı (otomatik bulunsun)?", True):
+        print("  Izgara ölçüsünü ver — içerik eşit hücrelere bölünecek.")
+        satir = sayi_sor("Satır sayısı", "2")
+        sutun = sayi_sor("Sütun sayısı", "4")
+
+    # Onizleme kare klasorunun DISINA yaziliyor: paketleme adimi o klasordeki
+    # butun PNG'leri kare sayiyor, iceri konsa fazladan bir kare olarak girerdi.
+    onizleme = klasor.rstrip(os.sep) + "_bolme.png"
+
+    if arac("split_sheet.py", sheet, "-o", klasor,
+            *secenek("--frames", kare_sayisi),
+            *secenek("--rows", satir), *secenek("--cols", sutun),
+            "--preview", onizleme):
         print(f"\n✓ Bitti: {kisalt(klasor)}")
+        print(f"  Bölme doğru mu: {kisalt(onizleme)} (kare sınırları kırmızı)")
         return klasor
     return None
 
