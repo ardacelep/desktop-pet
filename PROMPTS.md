@@ -14,7 +14,7 @@ Araçların ne yaptığı: [README](README.md#ai-ile-üretilen-spriteları-hazı
 | **Çerçeve, kare numarası, etiket, yer gölgesi yok** | Hepsi opak piksel; kareye yapışır ya da bölmeyi bozar | ✗ |
 | Dama rengi karakterde **hiç bulunmayan** bir renk olmalı | Ölçüldü: gri damada saf beyaz karakter pikselleri yeniyor, magenta damada yenmiyor | kısmen |
 | Blok kenarları **keskin** olmalı, yeniden sıkıştırma olmamalı | Yeterince bozulmuş bir render'da ızgara hiç bulunamıyor ve `pixelart_extract` hata verip duruyor | ✗ |
-| Filigranın **karakterin üstüne gelmemesi** | Yasaklamak işe yaramıyor; karaktere değerse ne leke ne renk ölçütü ayırt edebiliyor. Çare düzende sağ alt hücreyi boş bırakmak | ✗ |
+| Filigranın **karakterin üstüne gelmemesi** | Engellenemiyor; prompt'ta konuyu açmak durumu kötüleştiriyor. Tek çare düzende sağ alt hücreyi boş bırakmak | ✗ |
 | Karakter **dış kenara değmemeli** | Dama tonları tam o kenar şeridinden öğreniliyor; değerse karakterin konturu "dama tonu" sanılıyor | ✗ |
 | Karakterin canvas'ta ortalı olması | `pack_sheet` zaten içerikten hizalıyor | ✓ |
 | Kareler arası aynı taban çizgisi | `pack_sheet` ayak çizgisine hizalıyor | ✓ |
@@ -59,6 +59,29 @@ Bu iyi haber: araç sessizce bozuk çıktı vermek yerine duruyor. Ama dosya yin
 Pratikte: **çıktı PNG olarak alınmalı**, JPEG'e çevrilmemeli, "enhance"/upscale filtresinden geçirilmemeli, ekran görüntüsüyle yeniden kaydedilmemeli. Blok kenarlarında ara ton olmamalı.
 
 Kontrol etmenin en hızlı yolu, `pixelart_extract`'in bildirdiği native çözünürlük: 2048'lik bir canvas'tan 100×100 civarı bekliyorsanız ve araç size girdiyle aynı ölçüyü söylüyorsa ya da ızgarayı hiç bulamıyorsa, render bozuktur.
+
+### Kusur renk gürültüsü değil, kafes kayması
+
+Sezgi "sıkıştırma gürültüsü" der ama ölçüm başka şey gösterdi. Başarısız bir sheet 32 renge indirgendiğinde bile ızgara skoru 1.71'de kaldı (eşik 3.0) — yani sorun renk sayısı değil.
+
+Asıl ölçüt blok sınırlarının **fazı**: bütün sınırlar aynı kafese mi oturuyor? İki sheet aynı ızgara referansından üretildi, dama deseni ikisinde de birebir aynı (57px kare), ama:
+
+| | ızgara skoru | sınır fazlarının toplanması |
+| --- | --- | --- |
+| Çalışan sheet | 93.17 | 0.989 — sınırların %99'u tek fazda |
+| Bozuk sheet | 1.78 | 0.170 — sınırlar on dilime dağılmış |
+
+Yani arka planın düzenli olması yetmiyor; **karakterin** blok kenarlarının hepsi tek bir kafese oturmalı. Bozuk örnekte karakter, kenarları piksel ızgarasına oturtulmadan çizilmişti — çizgili gömlek gibi ince desenler bu riski artırıyor.
+
+### Kurtarma: `--period`
+
+Düzen biliniyorsa (elinizde native karakter varsa) periyodu elle verebilirsiniz; hücre içi **mod** alındığı için kafes birebir oturmasa da kullanılabilir sonuç çıkıyor:
+
+```bash
+python3 tools/pixelart_extract.py sheet.png native.png --period 7.136 --merge-colors 12
+```
+
+Periyot = sheet'teki karakter yüksekliği / native karakter yüksekliği. Bu bir onarım değil, mecburiyet çözümü: sonuç ölçülebilir şekilde daha gürültülü olur. Şansınız varsa yeniden ürettirin.
 
 ## Düzen: ızgara, tek sıra değil
 
@@ -126,7 +149,6 @@ RENDER KESKİNLİĞİ — EN KRİTİK TEKNİK MADDE
   keskinleştirme filtresi uygulama.
 
 GÖRSELDE BULUNMAYACAKLAR
-- Parıltı/yıldız işareti (✦, ✨), imza, filigran, logo — köşeye bile koyma.
 - Yer gölgesi, zemin çizgisi, platform, yansıma.
 - Çerçeve, kenarlık, başlık, etiket, yazı, renk paleti şeridi.
 - Karakterden KOPUK hiçbir parça olmasın; silüet tek parça olsun.
@@ -162,7 +184,6 @@ YERLEŞİM
 - Çerçeve, ayırıcı çizgi, kare numarası, etiket, başlık ya da yazı EKLEME.
 - Karakterin altına yer gölgesi ya da zemin çizgisi ÇİZME. Karakter dışında hiçbir
   şey olmayacak.
-- Parıltı/yıldız işareti (✦, ✨), imza, filigran ya da logo EKLEME — köşeye bile.
 
 ARKA PLAN
 - Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri tam olarak
@@ -227,11 +248,13 @@ python3 tools/grid_ref.py characters/ael/walk_right_spritesheet.png -o izgara_re
 
 Araç üç şeyi birden hallediyor: kareleri ızgaraya diziyor, magenta damayı çiziyor ve **sağ alt hücreyi boş bırakıyor** (nedeni aşağıda). 8 kare için 3×3 seçiyor, dokuzuncu hücre boş kalıyor.
 
-### Filigran: engellenemiyor, yeri ayarlanabiliyor
+### Filigran: konuyu hiç açmayın
 
-"Filigran ekleme" denmesine rağmen Gemini köşeye parıltı (✦) işaretini koyuyor. Ölçülen bir üretimde tam karakterin şortunun üzerine geldi ve orada **kurtarılamaz**: kopuk olmadığı için leke temizliği yakalayamıyor, rengi de karakterin gri tonlarıyla aynı ailede olduğu için renk ölçütü ayırt edemiyor.
+Gemini köşeye parıltı (✦) işaretini koyuyor ve bu **engellenemiyor**. Ölçülen bir üretimde tam karakterin şortunun üzerine geldi; orada kurtarılamaz, çünkü kopuk olmadığı için leke temizliği yakalayamıyor ve rengi karakterin gri tonlarıyla aynı ailede olduğu için renk ölçütü de ayırt edemiyor.
 
-Yasaklamak işe yaramadığına göre kalan yol yerini yönetmek. Filigran **sağ alta** düşüyor, o yüzden düzen sağ alt hücre boş kalacak şekilde seçiliyor — işaret boş arka plana düşüyor ve çıkarımda zararsız kalıyor.
+Prompt'ta filigrandan **hiç söz etmeyin** — ne yasak olarak, ne de "gerekiyorsa şuraya koy" diye. İkisi de denendi ve ikisi de ters tepti: yasaklayınca yine koydu, yer gösterince köşeye fazladan siyah damalı bir işaret daha ekledi (o işaret hem sağ hem alt kenara değiyordu, yani dama tonu öğrenmeyi de bozuyordu). Konuyu açmak modelin dikkatini oraya çekiyor.
+
+Çare tamamen düzende: sağ alt hücre boş bırakılıyor, işaret oraya düşüyor ve çıkarımda zararsız kalıyor. `grid_ref.py` bunu kendiliğinden yapıyor, prompt'ta tek kelime etmeye gerek yok.
 
 ### Dış kenar payı da şart
 
@@ -290,14 +313,10 @@ ARKA PLAN
   değsin ya da arada en az 4 piksellik net açıklık olsun.
 - Yer gölgesi, zemin çizgisi ÇİZME.
 
-Bir filigran/imza eklemen gerekiyorsa SAĞ ALTTAKİ BOŞ HÜCREYE koy; hiçbir
-karakterin üzerine gelmesin.
 
 Çıktıyı PNG olarak ver. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale
 filtresi uygulama.
 ```
-
-Son madde bilinçli: filigranı yasaklamak çalışmadığı için yasaklamak yerine **yer gösteriliyor**. Boş hücre zaten o iş için ayrılmış durumda.
 
 ### Gelen dosyada kontrol edilecekler
 

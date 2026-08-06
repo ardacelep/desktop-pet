@@ -514,7 +514,8 @@ def detect_axis_grid(arr: np.ndarray, axis: int, min_period: float = 3.0,
         detail = f" (en iyi oran {best[1]:.2f}, esik {min_ratio})" if best else ""
         raise ValueError(
             f"{name} ekseninde izgara bulunamadi{detail} — gorsel buyutulmus pixel art "
-            "olmayabilir ya da render cok bozuk olabilir.")
+            "olmayabilir ya da render cok bozuk olabilir. Duzeni biliyorsaniz "
+            "--period ile blok kenarini elle verebilirsiniz.")
 
     # Bolenler de gecerli cikar, dogru cevap EN BUYUK olan. Ama olcum gurultusu
     # yuzunden dogru periyodun 1-2 komsusu da listeye giriyor; en buyugun %5
@@ -1571,7 +1572,7 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
             cleanup: bool = True, verify: bool = False,
-            fill_gaps: int = 0) -> Image.Image:
+            fill_gaps: int = 0, period: float | None = None) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
@@ -1586,6 +1587,21 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
         gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
         small = arr.copy()
+    elif period:
+        # Render kafese tam oturmadiginda tespit HAKLI olarak reddediyor; ama
+        # duzen biliniyorsa (ornegin native karakter boyu elde varsa) periyot
+        # disaridan verilebiliyor. Hucre ici MOD alindigi icin indirgeme, kafes
+        # birebir oturmasa da makul bir sonuc uretiyor.
+        gx = AxisGrid(period=period, phase=0.0,
+                      count=len(lattice_edges(period, 0.0, W)) - 1, quality=1.0)
+        gy = AxisGrid(period=period, phase=0.0,
+                      count=len(lattice_edges(period, 0.0, H)) - 1, quality=1.0)
+        print(f"Izgara ELLE verildi: periyot {period:.4f}px -> "
+              f"NATIVE cozunurluk {gx.count}x{gy.count}")
+        if debug_dir:
+            os.makedirs(debug_dir, exist_ok=True)
+            dump_grid_overlay(arr, gx, gy, os.path.join(debug_dir, "1_izgara.png"))
+        small = downsample_by_mode(arr, gx, gy, center_ratio=center_ratio)
     else:
         log("Izgara tespiti:")
         gx, gy = detect_grid(arr)
@@ -1742,6 +1758,10 @@ def main(argv=None):
                              "ayni renk olabiliyor. Iki uzuv arasinda kalan YARIK bicimli "
                              "dama cepleri bu bayraga gerek olmadan zaten aciliyor. "
                              "Silinen her adacik raporlanir; --preview ile gozle dogrulayin.")
+    parser.add_argument("--period", type=float, default=None, metavar="PX",
+                        help="Izgara periyodunu ELLE ver (blok kenari, piksel). Tespit "
+                             "'render cok bozuk' deyip durduysa kullanin: periyot = "
+                             "sheet'teki karakter yuksekligi / native yukseklik.")
     parser.add_argument("--debug-dir", help="Ara adimlari bu klasore yazar (izgara katmani dahil)")
     parser.add_argument("--verify", action="store_true",
                         help="Cikarimin kayipsizligini olcup raporlar: izgara oturmasi, "
@@ -1756,7 +1776,7 @@ def main(argv=None):
                 center_ratio=args.center_ratio, debug_dir=args.debug_dir,
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
                 cleanup=not args.no_cleanup, verify=args.verify,
-                fill_gaps=args.fill_gaps)
+                fill_gaps=args.fill_gaps, period=args.period)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1
