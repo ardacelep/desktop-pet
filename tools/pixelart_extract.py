@@ -1736,7 +1736,8 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
             cleanup: bool = True, verify: bool = False,
             fill_gaps: int = 0, period: float | None = None,
-            per_frame: bool = False, like_ref: str | None = None) -> Image.Image:
+            per_frame: bool = False, like_ref: str | None = None,
+            keep_detail: bool = False) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
@@ -1885,8 +1886,24 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     if cleanup:
         # Kaynak destegi: "bu renk kaynakta gercekten var miydi?" Olmadan tek
         # piksellik gercek detaylar (goz aki gibi) artefakt sanilip boyaniyor.
-        support = cell_support(arr, gx, gy, small) if upscaled else None
-        rgba = remove_isolated_singletons(rgba, support=support)
+        if keep_detail:
+            # Olculdu: temizligin uc adimindan yalnizca BU zarar veriyor. Bir idle
+            # sheet'inde diger ikisi 0 piksel degistirirken bu 201 pikseli
+            # degistirdi ve 105'i yuz bolgesindeydi — gozun bebegi asindi, mavisi
+            # parcalandi.
+            #
+            # `support` bunu engellemeliydi ama olcut ters calisiyor: hucrenin
+            # kaynakta ne kadar TEK RENK oldugunu olcuyor, oysa ince detay tanimi
+            # geregi karisik hucrede yasiyor. Gozun mavi piksellerinde support
+            # ortalamasi 0.54 cikti (esik 0.6), yani yarisindan fazlasi korumasiz.
+            #
+            # Yerel renk istatistigiyle ayirmak da denendi ve olcum ayirt
+            # edilemedigini gosterdi: gozun komsusuna uzakligi medyan 26, gurultunun
+            # 22 — dagilimlar ic ice. O yuzden karar kullaniciya birakiliyor.
+            log("  tek piksel duzeltmesi atlandi (--keep-detail)")
+        else:
+            support = cell_support(arr, gx, gy, small) if upscaled else None
+            rgba = remove_isolated_singletons(rgba, support=support)
         log(f"  temizlik: {opaque_before} -> {int((rgba[:, :, 3] > 0).sum())} opak piksel")
 
     if merge_colors > 0:
@@ -1948,6 +1965,11 @@ def main(argv=None):
                         help="Izgara periyodunu ELLE ver (blok kenari, piksel). Tespit "
                              "'render cok bozuk' deyip durduysa kullanin: periyot = "
                              "sheet'teki karakter yuksekligi / native yukseklik.")
+    parser.add_argument("--keep-detail", action="store_true",
+                        help="Tek piksel duzeltmesini ATLA. Goz gibi ince detaylari\n"
+                             "koruyor; karsiliginda birkac tek piksellik artefakt\n"
+                             "kalabilir (elle temizlemesi kolay). Leke ve delik\n"
+                             "temizligi calismaya devam eder.")
     parser.add_argument("--like-ref", metavar="REF.PNG",
                         help="Izgarayi bu REFERANSTAN kur (grid_ref.py ciktisi). "
                              "Hedef native olcu referanstan okunur, periyot dayatilir "
@@ -1972,7 +1994,8 @@ def main(argv=None):
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
                 cleanup=not args.no_cleanup, verify=args.verify,
                 fill_gaps=args.fill_gaps, period=args.period,
-                per_frame=args.per_frame, like_ref=args.like_ref)
+                per_frame=args.per_frame, like_ref=args.like_ref,
+                keep_detail=args.keep_detail)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1
