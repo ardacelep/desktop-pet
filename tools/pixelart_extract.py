@@ -1624,9 +1624,16 @@ def ham_kare_kutulari(arr: np.ndarray, min_pay: int = 4
     return [k for k, n in zip(kutular, dolular) if n >= esik]
 
 
-def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
-                      pay: int = 24, gap: int = 2) -> tuple[np.ndarray, list[float], int]:
+def extract_per_frame(arr: np.ndarray, alpha: np.ndarray | None = None,
+                      center_ratio: float = 0.5, pay: int = 24, gap: int = 2
+                      ) -> tuple[np.ndarray, np.ndarray | None, list[float], int]:
     """Her kareyi KENDI izgarasiyla cikarip tek bir native seride dizer.
+
+    `alpha` verilirse (dosyada gercek alfa kanali varsa) o da AYNI kafeslerle
+    indirgenip ayni duzende ikinci bir seride diziliyor. Cagiranin alfayi
+    sonradan kendi basina indirgemesi MUMKUN DEGIL: buradan donen serit
+    kaynaktaki hicbir dikdortgene karsilik gelmiyor — kareler ayri ayri, ayri
+    periyotlarla orneklenip yan yana yeniden diziliyor.
 
     NEDEN GEREKLI (olculdu): bir Gemini sheet'inde izgara satirlarinin her biri
     FARKLI piksel olceginde cizilmisti — 1. satir 8.67px blok (karakter 70 native
@@ -1651,10 +1658,12 @@ def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
 
     H, W = arr.shape[:2]
     bg = ham_arka_plan(arr)
-    kesitler, izgaralar, boylar = [], [], []
+    kesitler, alfa_kesitleri, izgaralar, boylar = [], [], [], []
     for y0, y1, x0, x1 in kutular:
-        kesit = arr[max(0, y0 - pay):min(H, y1 + pay),
-                    max(0, x0 - pay):min(W, x1 + pay)]
+        sy = slice(max(0, y0 - pay), min(H, y1 + pay))
+        sx = slice(max(0, x0 - pay), min(W, x1 + pay))
+        kesit = arr[sy, sx]
+        alfa_kesitleri.append(None if alpha is None else alpha[sy, sx])
         gx, gy = detect_grid(kesit)
         # Karakterin boyu, satir bandindan DEGIL bu hucreden olculuyor: bant
         # yuksekligi satirdaki en uzun karaktere gore ve hepsi icin ayni, bu da
@@ -1672,8 +1681,8 @@ def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
     hedef = min(makul)
     log(f"  kare kare: native boylar {[round(b) for b in boylar]} -> hedef {hedef:.0f}")
 
-    kareler = []
-    for kesit, (gx, gy), boy in zip(kesitler, izgaralar, boylar):
+    kareler, alfa_kareler = [], []
+    for kesit, a_kesit, (gx, gy), boy in zip(kesitler, alfa_kesitleri, izgaralar, boylar):
         p = gy.period * (boy / hedef)                 # hedefe goturen periyot
         if abs(boy - hedef) < 0.5:                    # zaten hedefte: dokunma
             p = gy.period
@@ -1686,6 +1695,9 @@ def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
         g2x = AxisGrid(p, fx, len(lattice_edges(p, fx, kesit.shape[1])) - 1, 1.0)
         g2y = AxisGrid(p, fy, len(lattice_edges(p, fy, kesit.shape[0])) - 1, 1.0)
         kareler.append(downsample_by_mode(kesit, g2x, g2y, center_ratio=center_ratio))
+        if a_kesit is not None:
+            alfa_kareler.append(downsample_by_mode(
+                np.dstack([a_kesit] * 3), g2x, g2y, center_ratio=center_ratio)[:, :, 0])
 
     yuk = max(k.shape[0] for k in kareler)
     gen = sum(k.shape[1] for k in kareler) + gap * (len(kareler) - 1)
@@ -1693,11 +1705,17 @@ def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
     dolgu = kareler[0][0, 0]
     serit = np.zeros((yuk, gen, 3), dtype=np.uint8)
     serit[:, :] = dolgu
+    # Alfa seridinin dolgusu 0: kareler arasi bosluk ve kisa karelerin altinda
+    # kalan alan SEFFAF olmali. RGB tarafindaki dama tonu dolgusuyla ayni sey —
+    # ikisi de "burada karakter yok" diyor, yalnizca dili farkli.
+    alfa_serit = None if alpha is None else np.zeros((yuk, gen), dtype=np.uint8)
     x = 0
-    for k in kareler:
+    for i, k in enumerate(kareler):
         serit[:k.shape[0], x:x + k.shape[1]] = k
+        if alfa_serit is not None:
+            alfa_serit[:k.shape[0], x:x + k.shape[1]] = alfa_kareler[i]
         x += k.shape[1] + gap
-    return serit, boylar, round(hedef)
+    return serit, alfa_serit, boylar, round(hedef)
 
 
 def referans_native_olcu(yol: str) -> tuple[int, int]:
@@ -1744,15 +1762,20 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     if real_alpha is not None:
         log("  not: dosyada gercek alfa kanali var, dama tespiti yerine o kullanilacak")
 
-    upscaled = not looks_already_native(arr)
-
     # 1) izgara
-    if not upscaled:
-        print("Gorsel zaten native cozunurlukte gorunuyor — izgara indirgeme atlaniyor.")
-        gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
-        gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
-        small = arr.copy()
-    elif like_ref:
+    #
+    # SIRA ONEMLI: elle verilen izgara (--like-ref / --per-frame / --period)
+    # `looks_already_native` on kontrolunden ONCE geliyor. Ters sirada denendi ve
+    # yanlisti: on kontrol yanilabiliyor ve tam yanildigi dosyada bu bayraklarin
+    # ucu birden sessizce dusuyordu — yani tespitin durdugu yerde devreye girmesi
+    # gereken kacis kapisi, baska bir tespit tarafindan kapatiliyordu. Olculdu:
+    # blok sinirlari yumusatilmis 4x buyutulmus bir goruntude bicim orani
+    # 0.98/0.88 (esik 0.70) cikip "zaten native" deniyor; `--period 4` acikca
+    # verildigi halde cikti 96x96 ve 9194 renk kaliyordu (dogrusu 24x24).
+    # `looks_already_native`in kendi olcumunde de agir yeniden kodlanmis
+    # sheet'ler 0.56-0.59 ile esigin hemen altinda, yani bu dar bir kose degil.
+    alpha_small = None                # yalnizca --per-frame dolduruyor
+    if like_ref:
         nat_w, nat_h = referans_native_olcu(like_ref)
         gx, gy = izgarayi_referanstan_kur(arr, nat_w, nat_h)
         print(f"Izgara REFERANSTAN kuruldu ({os.path.basename(like_ref)}): "
@@ -1762,8 +1785,18 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             os.makedirs(debug_dir, exist_ok=True)
             dump_grid_overlay(arr, gx, gy, os.path.join(debug_dir, "1_izgara.png"))
         small = downsample_by_mode(arr, gx, gy, center_ratio=center_ratio)
+        upscaled = True
     elif per_frame:
-        small, boylar, hedef = extract_per_frame(arr, center_ratio=center_ratio)
+        # Alfa BURADA indirgenmeli. Donen serit kaynaktaki hicbir dikdortgene
+        # karsilik gelmiyor (kareler ayri periyotlarla orneklenip yeniden
+        # diziliyor), o yuzden asagidaki ortak alfa yolu bu duzeni yeniden
+        # uretemez — denendi ve sessizce YANLIS calisti: gx/gy seride gore
+        # kurulu oldugu icin `downsample_by_mode` cikti boyunu tutturuyor ama
+        # ornekleri kaynagin sol ust kosesinden aliyordu. Olculdu: alfa kanali
+        # eklenmis ayni goruntude cikti 50x20/792 opak yerine 58x28/1624 opak
+        # cikiyor ve bunun 1094 pikseli dama deseninin ta kendisi oluyordu.
+        small, alpha_small, boylar, hedef = extract_per_frame(
+            arr, real_alpha, center_ratio=center_ratio)
         gx = AxisGrid(period=1.0, phase=0.0, count=small.shape[1], quality=1.0)
         gy = AxisGrid(period=1.0, phase=0.0, count=small.shape[0], quality=1.0)
         upscaled = False
@@ -1789,7 +1822,15 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
             os.makedirs(debug_dir, exist_ok=True)
             dump_grid_overlay(arr, gx, gy, os.path.join(debug_dir, "1_izgara.png"))
         small = downsample_by_mode(arr, gx, gy, center_ratio=center_ratio)
+        upscaled = True
+    elif looks_already_native(arr):
+        upscaled = False
+        print("Gorsel zaten native cozunurlukte gorunuyor — izgara indirgeme atlaniyor.")
+        gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
+        gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
+        small = arr.copy()
     else:
+        upscaled = True
         log("Izgara tespiti:")
         gx, gy = detect_grid(arr)
         print(f"Izgara: periyot X={gx.period:.4f}px  Y={gy.period:.4f}px   "
@@ -1818,9 +1859,10 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
     field = None
     tol = bg_tol or 0
     if real_alpha is not None:
-        alpha_small = downsample_by_mode(
-            np.dstack([real_alpha] * 3), gx, gy, center_ratio=center_ratio
-        )[:, :, 0]
+        if alpha_small is None:                # --per-frame kendi indirgemesini yapti
+            alpha_small = downsample_by_mode(
+                np.dstack([real_alpha] * 3), gx, gy, center_ratio=center_ratio
+            )[:, :, 0]
         rgba = np.dstack([small, np.where(alpha_small > 127, 255, 0).astype(np.uint8)])
     else:
         tones = detect_background_tones(small)
@@ -1961,7 +2003,11 @@ def main(argv=None):
                              "ayni renk olabiliyor. Iki uzuv arasinda kalan YARIK bicimli "
                              "dama cepleri bu bayraga gerek olmadan zaten aciliyor. "
                              "Silinen her adacik raporlanir; --preview ile gozle dogrulayin.")
-    parser.add_argument("--period", type=float, default=None, metavar="PX",
+    # Ucu de "izgarayi sen bulma, ben soyluyorum" diyor. Birbirini dislayan gruba
+    # alindilar cunku birlikte verildiklerinde hangisinin kazandigini sessizce
+    # dallanma sirasi belirliyordu.
+    izgara = parser.add_mutually_exclusive_group()
+    izgara.add_argument("--period", type=float, default=None, metavar="PX",
                         help="Izgara periyodunu ELLE ver (blok kenari, piksel). Tespit "
                              "'render cok bozuk' deyip durduysa kullanin: periyot = "
                              "sheet'teki karakter yuksekligi / native yukseklik.")
@@ -1970,12 +2016,12 @@ def main(argv=None):
                              "koruyor; karsiliginda birkac tek piksellik artefakt\n"
                              "kalabilir (elle temizlemesi kolay). Leke ve delik\n"
                              "temizligi calismaya devam eder.")
-    parser.add_argument("--like-ref", metavar="REF.PNG",
+    izgara.add_argument("--like-ref", metavar="REF.PNG",
                         help="Izgarayi bu REFERANSTAN kur (grid_ref.py ciktisi). "
                              "Hedef native olcu referanstan okunur, periyot dayatilir "
                              "ve yalnizca faz aranir — tespit kil payi kaldiginda "
                              "bundan cok daha saglam.")
-    parser.add_argument("--per-frame", action="store_true",
+    izgara.add_argument("--per-frame", action="store_true",
                         help="Her kareyi KENDI izgarasiyla cikarir. Gemini kareleri\n"
                              "farkli piksel olceginde cizdiyse (global tespit 'render cok\n"
                              "bozuk' diyorsa) bunu deneyin.")

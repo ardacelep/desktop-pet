@@ -22,7 +22,7 @@ import tempfile
 import time
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pixelart_extract as px  # noqa: E402
@@ -874,6 +874,105 @@ def test_kare_kare_farkli_olcek():
           max(boylar) - min(boylar) <= 2, f"boylar {boylar}")
 
 
+def _native_sanilan_buyutulmus(olcek: int = 4, kutu: int = 24) -> np.ndarray:
+    """`looks_already_native`i YANILTAN, gercekte buyutulmus bir goruntu uretir.
+
+    Blok sinirlarini bulaniklastirmak, `line_diff_shape`in dayandigi iki tepeli
+    dagilimi tek tepeliye ceviriyor — agir yeniden kodlanmis bir render'da olan
+    seyin abartilmis hali."""
+    rng = np.random.default_rng(3)
+    nat = rng.integers(0, 255, (kutu, kutu, 3), dtype=np.uint8)
+    buyuk = np.repeat(np.repeat(nat, olcek, 0), olcek, 1)
+    return np.array(Image.fromarray(buyuk).filter(ImageFilter.GaussianBlur(2.2)))
+
+
+def test_elle_izgara_on_kontrolden_once():
+    """REGRESYON: elle verilen izgara, `looks_already_native` on kontrolunden
+    ONCE degerlendirilmeli.
+
+    Ters siradaydi ve --like-ref / --per-frame / --period'un ucu birden, on
+    kontrol "bu zaten native" dedigi anda SESSIZCE dusuyordu. Tam da kacis
+    kapisina ihtiyac duyulan yerde kapali olmasi demek bu: --period'un kendi
+    yardim metni "tespit durduysa kullanin" diyor, ama onu durduran sey baska
+    bir tespitti.
+
+    Olculdu: asagidaki goruntude bicim orani 0.98/0.88 (esik 0.70) cikiyor,
+    yani on kontrol yaniliyor; --period 4 verildigi halde cikti 96x96 ve 9194
+    renk kaliyordu. Dogrusu 24x24."""
+    kutu, olcek = 24, 4
+    sm = _native_sanilan_buyutulmus(olcek, kutu)
+    check("elle izgara: on kontrol gercekten yaniliyor (testin on sarti)",
+          px.looks_already_native(sm),
+          f"oran {tuple(round(v, 3) for v in px.line_diff_shape(sm))}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        hp, op = os.path.join(tmp, "hedef.png"), os.path.join(tmp, "out.png")
+        Image.fromarray(sm).save(hp)
+
+        px.extract(hp, op, no_crop=True, cleanup=False, period=float(olcek))
+        out = np.array(Image.open(op).convert("RGBA"))
+        check("--period on kontrole ragmen uygulandi", out.shape[:2] == (kutu, kutu),
+              f"{out.shape[1]}x{out.shape[0]}, beklenen {kutu}x{kutu}")
+
+        # --like-ref de ayni kapiya takiliyordu. Referans temiz bir buyutme,
+        # yani native olcusu guvenle okunuyor.
+        rng = np.random.default_rng(11)
+        ref_nat = rng.integers(0, 255, (kutu, kutu, 3), dtype=np.uint8)
+        rp = os.path.join(tmp, "ref.png")
+        Image.fromarray(np.repeat(np.repeat(ref_nat, 5, 0), 5, 1)).save(rp)
+
+        op2 = os.path.join(tmp, "out2.png")
+        px.extract(hp, op2, no_crop=True, cleanup=False, like_ref=rp)
+        out2 = np.array(Image.open(op2).convert("RGBA"))
+        check("--like-ref on kontrole ragmen uygulandi", out2.shape[:2] == (kutu, kutu),
+              f"{out2.shape[1]}x{out2.shape[0]}, beklenen {kutu}x{kutu}")
+
+
+def test_per_frame_gercek_alfayi_dogru_indirger():
+    """REGRESYON: --per-frame, dosyada gercek alfa kanali varken arka plani
+    ciktiya GOMUYORDU.
+
+    Sebep: alfa, seride gore kurulmus gx/gy ile indirgeniyordu. `downsample_by_mode`
+    cikti boyunu `gx.count`tan aldigi icin COKME olmuyor — orneklerini sessizce
+    kaynagin sol ust kosesinden aliyordu. Olculdu: alfa kanali eklenmis ayni
+    goruntude cikti 50x20/792 opak yerine 58x28/1624 opak cikiyor ve bunun 1094
+    pikseli damanin ta kendisi oluyordu.
+
+    Kare kare cikarimda donen serit kaynaktaki hicbir dikdortgene karsilik
+    gelmedigi icin alfanin ayni kafeslerle, kare kare indirgenmesi sart."""
+    nat_h, nat_w, kutu, olcek = 30, 64, 20, 6
+    rng = np.random.default_rng(1)
+    zemin = np.array([255, 0, 255], np.uint8)      # seffaf alanin altindaki RGB
+
+    lay = np.zeros((nat_h, nat_w, 4), np.uint8)
+    lay[:, :, :3] = zemin
+    for x0 in (4, 36):
+        lay[5:5 + kutu, x0:x0 + kutu, :3] = rng.integers(60, 200, (kutu, kutu, 3),
+                                                         dtype=np.uint8)
+        lay[5:5 + kutu, x0:x0 + kutu, 3] = 255
+    big = np.repeat(np.repeat(lay, olcek, 0), olcek, 1)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "s.png"), os.path.join(tmp, "o.png")
+        Image.fromarray(big).save(src)
+        try:
+            px.extract(src, dst, no_crop=True, cleanup=False, per_frame=True)
+        except Exception as err:                    # noqa: BLE001
+            check("per-frame + alfa: cikarim calisti", False, str(err))
+            return
+        out = np.array(Image.open(dst).convert("RGBA"))
+
+    opak = out[:, :, 3] > 0
+    beklenen = 2 * kutu * kutu
+    check("per-frame + alfa: opak alan iki karenin alani kadar",
+          abs(int(opak.sum()) - beklenen) <= 0.1 * beklenen,
+          f"{int(opak.sum())} opak, beklenen ~{beklenen}")
+
+    sizan = int((np.abs(out[:, :, :3][opak].astype(np.int32) - zemin).max(axis=1) <= 6).sum())
+    check("per-frame + alfa: arka plan ciktiya gomulmedi", sizan == 0,
+          f"{sizan} zemin pikseli opak kalmis")
+
+
 def test_sheet_kareleri_kalinti_sanilmiyor():
     """REGRESYON: sprite SHEET'te kareler birbirinden kopuk oldugu icin
     `remove_background_remnants` karakterlerin hepsini (en buyugu haric) "kopuk
@@ -1030,6 +1129,8 @@ if __name__ == "__main__":
         test_single_pixel_highlight_survives_pipeline,
         test_like_ref_geometriyi_dayatiyor,
         test_kare_kare_farkli_olcek,
+        test_elle_izgara_on_kontrolden_once,
+        test_per_frame_gercek_alfayi_dogru_indirger,
         test_sheet_kareleri_kalinti_sanilmiyor,
         test_gamut_query_is_exact,
         test_high_cardinality_bounded,
