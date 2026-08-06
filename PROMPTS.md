@@ -350,7 +350,89 @@ python3 tools/split_sheet.py sheet_native.png -o kareler/ --rows 3 --cols 3 --pr
 
 Boş hücre kare sayısını bir fazla gösterir mi? Göstermez — boş hücrede opak piksel olmadığı için `split_sheet` onu kare saymaz. Ama filigran oraya düştüyse **sayar**; o zaman `--frames` ile beklenen sayıyı verip fazladan çıkanı silin.
 
-## 4. Idle spritesheet (4 kare, 2×2)
+## 4. Idle spritesheet
+
+Idle için de en güvenilir yol poz referansı vermek. Sıfırdan üretim aşağıda ikinci seçenek olarak duruyor.
+
+### 4a. Hazır idle sheet üzerinde karakter değiştirme (önerilen)
+
+Walk ile aynı mantık, ama **bir tuzağı fazla var**: idle'da kareler arasındaki fark çok küçük. Ölçülen referansta nefes hareketi tam **1 piksel** — omuz hattı 1. karede y=7, diğer üçünde y=6; siluet farkları 35-101 piksel. Bu kadar ince bir farkı model kolayca "gürültü" sanıp dört kareyi birbirinin aynısı yapıyor. Prompt bu yüzden farkın korunmasını açıkça istiyor.
+
+```bash
+python3 tools/grid_ref.py characters/ael/idle_spritesheet.png -o idle_ref.png
+```
+
+4 kare için 2 satır × 3 sütun seçilir; iki hücre boş kalır, sonuncusu sağ altta (filigran oraya düşsün).
+
+```
+Sana İKİ referans veriyorum:
+  (A) POZ REFERANSI — idle (bekleme) animasyonu, IZGARA düzeninde.
+  (B) KARAKTER REFERANSI — kullanmanı istediğim karakter.
+
+GÖREV
+(A)'daki her karenin DURUŞUNU birebir koru, ama karakteri (B)'deki karakterle
+DEĞİŞTİR. Duruş/hareket (A)'dan, görünüm (B)'den gelecek.
+
+- (B)'deki saç, yüz, gözlük, sakal, kıyafet, aksesuarlar, renk paleti — hepsi
+  birebir taşınacak.
+- (A)'daki karakterin kıyafetinden, saç renginden, vücut oranından HİÇBİR ŞEY
+  sızmayacak. (A) yalnızca duruş kaynağı.
+
+EN KRİTİK MADDE — KARELER ARASI FARK ÇOK KÜÇÜK, KORU
+(A)'daki dört kare birbirine ÇOK benziyor; aralarındaki tek fark göğüs/omuz
+hattının 1 piksel oynaması. Bu fark animasyonun KENDİSİ, gürültü değil.
+- Dört kareyi birbirinin aynısı YAPMA.
+- Hangi karede omuz hattı yukarıdaysa senin çıktında da yukarıda olsun;
+  aşağıdaysa aşağıda. (A)'ya kare kare bakıp bu farkı taşı.
+- Farkı BÜYÜTME de: 1 piksellik oynama 1 piksel kalsın. Karakteri bütün
+  olarak büyütüp küçültme.
+- Ayakların konumu, bacaklar, kolların X konumu, kafanın boyutu, silüetin
+  genişliği dört karede de TEK PİKSEL bile oynamayacak.
+
+DÜZEN — (A) İLE BİREBİR AYNI
+- (A)'nın ızgara düzenini AYNEN koru: aynı satır sayısı, aynı sütun sayısı,
+  aynı kare sırası.
+- (A)'da BOŞ olan hücreleri BOŞ BIRAK. Oraya kare koyma, karakter çizme.
+- Kareler arasındaki boşluklar ve ızgaranın DIŞINDAKİ kenar payı (A)'daki
+  kadar kalsın. Karakterin hiçbir pikseli tuvalin dış kenarına DEĞMESİN.
+- Canvas (A) ile aynı en-boy oranında olsun.
+- Çerçeve, ayırıcı çizgi, kare numarası, etiket ya da yazı EKLEME.
+
+ÖLÇEK
+- Karakterin ölçeği bütün karelerde BİREBİR aynı olmalı: kafa yüksekliği,
+  gövde genişliği, bacak uzunluğu — hepsi aynı sayıda piksel.
+- Tüm sheet aynı piksel ızgarasında çizilsin; bir karedeki piksel bloğu ile
+  diğerindeki aynı boyutta olmalı.
+- Karakter ÖNDEN görünsün (idle önden, yürüyüş yandan).
+
+ARKA PLAN
+- (A)'daki dama (checkerboard) desenini aynen koru: renkleri TAM OLARAK
+  #FF00FF ve #C000C0, kare boyutu da (A)'daki kadar.
+- Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
+- Dama tüm görsel boyunca AYNI iki renkte kalsın; gradyan, gölge, vinyet ya da
+  renk kayması EKLEME.
+
+ÇİZİM KURALLARI
+- Gerçek pixel art: her piksel bloğu TEK düz renk, kenarları keskin.
+- Anti-aliasing, yumuşak geçiş, gradyan, bulanıklık ya da yarı saydam piksel YOK.
+- Sınırlı palet (16-24 renk), net koyu kontur.
+- Kolla gövde arasında 1-2 piksellik minik boşluklar bırakma: kol ya gövdeye
+  değsin ya da arada en az 4 piksellik net açıklık olsun.
+- Yer gölgesi, zemin çizgisi ÇİZME.
+
+Çıktıyı PNG olarak ver. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale
+filtresi uygulama.
+```
+
+Gelen dosyada ilk bakılacak şey: **dört kare gerçekten farklı mı?** Aynı çıktıysa yeniden ürettirin — prompt'taki "fark animasyonun kendisi" maddesini daha da vurgulayarak. Kontrol için:
+
+```bash
+python3 tools/pack_sheet.py kareler/kare_*.png -o idle_spritesheet.png --gif on.gif --duration 500
+```
+
+GIF'te hiçbir hareket görünmüyorsa kareler aynıdır.
+
+### 4b. Sıfırdan idle (poz referansı yoksa)
 
 Walk prompt'unun aynısı; yalnızca POZLAR bölümünü değiştirin:
 

@@ -62,8 +62,16 @@ def duzen_sec(kare: int, bos_birak: bool = True) -> tuple[int, int]:
         sutun = -(-gerekli // satir)              # yukari yuvarlama
         if satir * sutun < gerekli:
             continue
-        # kareye yakinlik: en-boy orani 1'e ne kadar uzak
-        puan = abs(sutun / satir - 1.0) + 0.15 * (satir * sutun - gerekli)
+        # Kareye yakinlik SIMETRIK olcuulmeli: abs(sutun/satir - 1) 3x2'yi
+        # (0.333) 2x3'ten (0.5) daha iyi gosteriyordu, oysa ikisi ayni oranda
+        # kareden uzak — fark yalnizca hangisinin DIKEY oldugunda. Dikey tuval
+        # ise zararli: Gemini portre canvas'ta karakteri sikistirip olcegi
+        # kareler arasinda oynatiyor. O yuzden oran max/min ile olculuyor ve
+        # dikey duzenlere ek ceza veriliyor.
+        oran = max(satir, sutun) / min(satir, sutun)
+        puan = (oran - 1.0) + 0.15 * (satir * sutun - gerekli)
+        if satir > sutun:
+            puan += 0.30
         if puan < en_iyi_puan:
             en_iyi, en_iyi_puan = (satir, sutun), puan
     return en_iyi
