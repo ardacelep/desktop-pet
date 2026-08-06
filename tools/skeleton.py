@@ -84,11 +84,19 @@ AYAK = ("RIGHT LEG", "LEFT LEG")
 
 @dataclass
 class Iskelet:
-    """Eklem konumlari, karenin SOL UST kosesine gore native piksel."""
+    """Eklem konumlari, karenin SOL UST kosesine gore native piksel.
+
+    `olculen` siluetten OLCULEN eklemler; digerleri turetilmis tahmin.
+    `supheli` ise olculdu ama SINYAL ZAYIFTI demek — deger var, guvenilmez.
+    Ikisini ayirmak sart: "olcum yaptik" ile "olcum anlamli" ayni sey degil.
+    Karakterlerin cizim tarzi ayni olmadigi icin bir karakterde net olan
+    isaret digerinde hic olmayabiliyor, ve bunu sessizce yutmak yanlis
+    sonucu dogru gibi gosteriyor."""
 
     noktalar: dict[str, tuple[float, float]]
     z: dict[str, float] = field(default_factory=dict)
     olculen: frozenset[str] = frozenset()
+    supheli: frozenset[str] = frozenset()
 
     def __post_init__(self):
         eksik = set(LABELS) - set(self.noktalar)
@@ -338,6 +346,28 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     kalca_y = kalca_satiri(opak, y0, y1)
     ayaklar = ayak_bantlari(opak, y0, y1)
 
+    # Sinyal gucu. Her olcumun bir "bu karakterde gercekten var miydi"
+    # kontrolu var; olculdu ama zayifsa deger yine uretiliyor, ama supheli
+    # isaretleniyor ki kullanici once oraya baksin.
+    supheli: set[str] = set()
+
+    # Boyun: kafa ile govde arasindaki daralma NE KADAR belirgin? Dar bolge
+    # uzunsa boyun ile gogus ayni genislikte demektir ve minimum keyfi kalir.
+    # Olculdu — bes karakterde oran %2.4/%3.5/%3.6/%7.1 ve faküs'te %13.2;
+    # faküs'te sacin omuzlara inmesi ve govdenin ince olmasi cukuru tamamen
+    # yok ediyor (boyunda 26 piksel, gogüste 25-27).
+    # Bolge TEPEDEN tabana sayilir: `boyun_satiri` zaten tabani donduruyor,
+    # oradan asagi saymak bolgenin tamamini degil yalnizca kuyrugunu olcerdi.
+    gen_prof = opak.sum(axis=1)
+    _bas, _son = int(0.25 * h), max(int(0.25 * h) + 1, int(0.55 * h))
+    tepe = y0 + _bas + int(np.argmin(gen_prof[y0 + _bas:y0 + _son]))
+    dar = sum(1 for y in range(tepe, min(y0 + int(0.60 * h), y1) + 1)
+              if gen_prof[y] <= gen_prof[tepe] + 3)
+    if dar / h > 0.10:
+        supheli.update({"NECK", "RIGHT SHOULDER", "LEFT SHOULDER"})
+    if len(ayaklar) < 2:
+        supheli.update({"RIGHT LEG", "LEFT LEG", "RIGHT KNEE", "LEFT KNEE"})
+
     def uclar(y: int) -> tuple[float, float]:
         """Satirin en dis opak sutunlari; bos satirda govde eksenine duser."""
         b = bantlar(opak[int(y)], bosluk=2)
@@ -436,6 +466,11 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     }
     # Gozler once OLCULMEYE calisiliyor (sclera); bulunamazsa turetiliyor.
     olculen_goz = goz_satiri(rgba, y0, boyun_y)
+    if olculen_goz is None:
+        # Sclera yok (koyu goz, gozluk, kapali goz). Yuz noktalari kafa
+        # KUTUSUNDAN turetiliyor ve kutu saci da iceriyor; sacli bir
+        # karakterde bu belirgin sekilde kayiyor.
+        supheli.update({"RIGHT EYE", "LEFT EYE", "NOSE", "RIGHT EAR", "LEFT EAR"})
     if olculen_goz is not None:
         goz_y, kumeler = olculen_goz
         if len(kumeler) >= 2 and not profil:
@@ -492,7 +527,7 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
                   "RIGHT HIP", "RIGHT KNEE", "RIGHT LEG"):
             z[a] = 1.0
 
-    return Iskelet(n, z, olculen)
+    return Iskelet(n, z, olculen, frozenset(supheli))
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +613,7 @@ def rige_oturt(isk: "Iskelet", rig: dict[tuple[str, str], float]) -> "Iskelet":
         if not l1 or not l2:
             continue
         n[b] = _iki_kemik_ik(n[a], n[c], l1, l2, tercih=n[b])
-    return Iskelet(n, dict(isk.z), isk.olculen)
+    return Iskelet(n, dict(isk.z), isk.olculen, isk.supheli)
 
 
 # ---------------------------------------------------------------------------
@@ -613,8 +648,12 @@ def overlay(rgba: np.ndarray, iskelet: Iskelet, olcek: int = 8) -> Image.Image:
         d.line([p(a), p(b)], fill=(0, 200, 255, 200), width=max(1, olcek // 4))
     for a in LABELS:
         x, y = p(a)
-        r = olcek * (0.45 if a in iskelet.olculen else 0.3)
-        renk = (255, 60, 60, 255) if a in iskelet.olculen else (255, 220, 0, 255)
+        if a in iskelet.supheli:                      # zayif sinyal: once buna bak
+            r, renk = olcek * 0.5, (255, 140, 0, 255)
+        elif a in iskelet.olculen:
+            r, renk = olcek * 0.45, (255, 60, 60, 255)
+        else:
+            r, renk = olcek * 0.3, (255, 220, 0, 255)
         d.ellipse([x - r, y - r, x + r, y + r], fill=renk)
     return Image.alpha_composite(im, kat)
 
@@ -660,12 +699,18 @@ def main(argv=None):
     print(f"{os.path.basename(args.sprite)} kare {args.frame} ({kare.shape[1]}x{kare.shape[0]}):")
     for a in LABELS:
         x, y = isk.noktalar[a]
-        isaret = "olculdu " if a in isk.olculen else "turetildi"
+        isaret = ("ZAYIF SINYAL" if a in isk.supheli
+                  else "olculdu " if a in isk.olculen else "turetildi")
         print(f"  {a:<16s} x={x:6.1f} y={y:6.1f}  z={isk.z.get(a, 0.0):.0f}  {isaret}")
+    if isk.supheli:
+        print(f"\nUYARI: {len(isk.supheli)} eklem zayif sinyalle bulundu — bu "
+              "karakterin cizim tarzinda o isaret yok.\n"
+              "Once bunlari elle duzeltin:  npm run skeleton", file=sys.stderr)
 
     if args.overlay:
         overlay(kare, isk, args.overlay_scale).save(args.overlay)
-        print(f"Overlay: {args.overlay}  (kirmizi = olculen capa, sari = turetilen)")
+        print(f"Overlay: {args.overlay}  (kirmizi = olculdu, turuncu = zayif "
+              f"sinyal, sari = turetildi)")
     if args.json:
         with open(args.json, "w") as f:
             json.dump({"keypoints": isk.to_pixellab()}, f, indent=2)

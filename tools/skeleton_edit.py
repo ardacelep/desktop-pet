@@ -82,6 +82,7 @@ SAYFA = r"""<!doctype html>
   li:hover { background:#242932; }
   li.secili { background:#2f4a6f; }
   .olculdu { color:#ff6b6b; }  .turetildi { color:#ffd93d; }
+  .supheli { color:#ff8c1a; font-weight:700; }
   .ipucu { margin-top:14px; font-size:11px; color:#8b93a1; }
   .ipucu b { color:#c8cdd6; font-weight:600; }
   #durum { margin-top:8px; font-size:11px; min-height:32px; color:#9fd3a0; }
@@ -134,8 +135,11 @@ SAYFA = r"""<!doctype html>
     <span style="color:#59e0a0">▮</span> ayna / es eklem ·
     <span style="color:#7fb2ff">▮</span> baska bir eklem.<br>
     <b>Alt</b> basili tutarsan kilitleme kapanir.<br><br>
-    <span class="olculdu">■</span> siluetten olculdu
-    <span class="turetildi">■</span> turetildi — once bunlari kontrol et
+    <span class="olculdu">■</span> olculdu ·
+    <span class="supheli">■</span> zayif sinyal ·
+    <span class="turetildi">■</span> turetildi<br>
+    Turuncular bu karakterin cizim tarzinda ISARETI OLMAYAN eklemler —
+    once onlari duzelt.
   </p>
 </div>
 <script>
@@ -225,7 +229,8 @@ async function tespit(yeni = false) {
     document.getElementById('kare_say').textContent = durum.kare_say;
     document.getElementById('kare_no').textContent = durum.kare;
     document.getElementById('bilgi').textContent =
-      `${durum.ad} · ${durum.w}x${durum.h} · ${durum.olculen.length}/18 olculdu`;
+      `${durum.ad} · ${durum.w}x${durum.h} · ${durum.olculen.length}/18 olculdu`
+      + ((durum.supheli||[]).length ? ` · ${durum.supheli.length} zayif sinyal` : '');
     bildir(`hazir — kaydedilecek: ${durum.cikti}`);
   } catch (e) { bildir(String(e), true); }
 }
@@ -267,10 +272,11 @@ function ciz() {
     ctx.stroke();
   }
   for (const ad of LABELS) {
-    const [x,y] = durum.noktalar[ad], oz = durum.olculen.includes(ad);
-    const r = olcek * (ad===secili ? .55 : (oz ? .42 : .3));
+    const [x,y] = durum.noktalar[ad];
+    const sup = (durum.supheli||[]).includes(ad), oz = durum.olculen.includes(ad);
+    const r = olcek * (ad===secili ? .55 : (sup ? .5 : oz ? .42 : .3));
     ctx.beginPath(); ctx.arc((x+.5)*olcek, (y+.5)*olcek, r, 0, 7);
-    ctx.fillStyle = oz ? '#ff6b6b' : '#ffd93d'; ctx.fill();
+    ctx.fillStyle = sup ? '#ff8c1a' : oz ? '#ff6b6b' : '#ffd93d'; ctx.fill();
     if (ad === secili) { ctx.strokeStyle='#fff'; ctx.lineWidth=Math.max(1,olcek/6); ctx.stroke(); }
   }
   listele();
@@ -278,7 +284,7 @@ function ciz() {
 function listele() {
   document.getElementById('liste').innerHTML = LABELS.map(a =>
     `<li class="${a===secili?'secili':''}" onclick="sec('${a}')">
-       <span class="${durum.olculen.includes(a)?'olculdu':'turetildi'}">${a}</span>
+       <span class="${(durum.supheli||[]).includes(a)?'supheli':durum.olculen.includes(a)?'olculdu':'turetildi'}">${a}</span>
        <span>${durum.noktalar[a][0].toFixed(1)}, ${durum.noktalar[a][1].toFixed(1)}</span></li>`
   ).join('');
 }
@@ -435,6 +441,7 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
                 "w": int(kare.shape[1]), "h": int(kare.shape[0]),
                 "kare": int(govde.get("kare", 0)), "kare_say": int(toplam),
                 "olculen": sorted(isk.olculen),
+                "supheli": sorted(isk.supheli),
                 "noktalar": {a: [round(float(x), 1), round(float(y), 1)]
                              for a, (x, y) in isk.noktalar.items()},
                 "cikti": durum.cikti_yolu(govde.get("ad", ""), int(govde.get("kare", 0))),

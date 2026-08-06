@@ -238,6 +238,69 @@ def test_el_kolun_bittigi_yerde():
           f"{[round(isk.noktalar[a][0], 1) for a in ('RIGHT ARM', 'LEFT ARM')]}")
 
 
+def test_zayif_sinyal_isaretleniyor():
+    """Olcum YAPILDI ile olcum ANLAMLI ayni sey degil.
+
+    Karakterlerin cizim tarzi ayni olmadigi icin bir karakterde net olan
+    isaret digerinde hic olmayabiliyor. faküs boyle: sac omuzlara indigi ve
+    govde ince oldugu icin boyun cukuru YOK (olculdu — boyunda 26 piksel,
+    gogüste 25-27), gozlerinde parlak sclera yok, bol pacali pantolon iki
+    bacagi birlestiriyor. Deger yine uretiliyor ama guvenilmez; bunu sessizce
+    yutmak yanlisi dogru gibi gosterirdi.
+
+    Olculdu: dar bolge orani bes karakterde %2.4/%3.5/%3.6/%7.1 ve faküs'te
+    %13.2 — esik ikisinin arasina konuldu ve yalnizca faküs isaretleniyor."""
+    # Boyun cukuru olmayan figur: kafa, boyun ve govde ayni genislikte
+    duz = figur(kafa_w=26, boyun_w=26, govde_w=26)
+    isk = sk.estimate(duz, direction="south")
+    check("zayif sinyal: cukursuz boyun isaretlendi", "NECK" in isk.supheli,
+          f"supheli={sorted(isk.supheli)}")
+    check("zayif sinyal: omuzlar da isaretlendi",
+          "RIGHT SHOULDER" in isk.supheli and "LEFT SHOULDER" in isk.supheli)
+
+    # Bacaklari birlesik figur (bol paca / cubbe)
+    birlesik = figur(ara=0)
+    isk2 = sk.estimate(birlesik, direction="south")
+    check("zayif sinyal: birlesik bacak isaretlendi",
+          "RIGHT LEG" in isk2.supheli and "LEFT KNEE" in isk2.supheli,
+          f"supheli={sorted(isk2.supheli)}")
+
+    # Sclera yoksa yuz noktalari supheli
+    check("zayif sinyal: sclera yokken gozler isaretlendi",
+          "RIGHT EYE" in isk2.supheli and "NOSE" in isk2.supheli)
+
+    # Normal figurde bunlarin hicbiri isaretlenmemeli
+    goz = figur()
+    goz[16, 38:41] = (250, 250, 250, 255)
+    goz[16, 49:52] = (250, 250, 250, 255)
+    isk3 = sk.estimate(goz, direction="south")
+    check("zayif sinyal: saglam figurde bos", not isk3.supheli,
+          f"supheli={sorted(isk3.supheli)}")
+
+    # rige_oturt bilgiyi kaybetmemeli
+    rig = sk.rig_olustur([isk, isk])
+    check("zayif sinyal: rige oturunca korunuyor",
+          sk.rige_oturt(isk, rig).supheli == isk.supheli)
+
+
+def test_gercek_karakterlerde_zayif_sinyal():
+    """faküs disindaki karakterlerde uyari cikmamali (yanlis alarm olcumu)."""
+    for ad, meta, dizin in karakterler():
+        if "idle" not in meta:
+            continue
+        k = meta["idle"]["frameSize"]
+        sh = np.array(Image.open(os.path.join(dizin, meta["idle"]["file"]))
+                      .convert("RGBA"))
+        isk = sk.estimate(sh[:, :k], direction="south")
+        if ad == "faküs":
+            check(f"{ad}: yapisal farklilik yakalandi", len(isk.supheli) >= 6,
+                  f"{len(isk.supheli)} isaret")
+            check(f"{ad}: bel isaretlenmedi", "RIGHT HIP" not in isk.supheli)
+        else:
+            check(f"{ad}: yanlis alarm yok", not isk.supheli,
+                  f"supheli={sorted(isk.supheli)}")
+
+
 def test_pixellab_formati():
     isk = sk.estimate(figur(), direction="south")
     kp = isk.to_pixellab()
@@ -494,6 +557,8 @@ def main():
         test_onden_zincir_caprazlamiyor,
         test_dirsek_kolun_uzerinde,
         test_el_kolun_bittigi_yerde,
+        test_zayif_sinyal_isaretleniyor,
+        test_gercek_karakterlerde_zayif_sinyal,
         test_pixellab_formati,
         test_profilde_z_ayiriyor,
         test_bos_ve_bozuk_girdi,
