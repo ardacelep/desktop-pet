@@ -1,0 +1,33 @@
+{
+  "displayName": "Faküs",
+  "nativeFrameSize": 91,
+  "displayScale": 1,
+
+  "idle": {
+    "file": "idle_spritesheet.png",
+    "frameSize": 91,
+    "frameCount": 4,
+    "frameDuration": 500
+  },
+  "walk_right": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 91,
+    "frameCount": 8,
+    "frameDuration": 120
+  },
+  "walk_left": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 91,
+    "frameCount": 8,
+    "frameDuration": 120,
+    "flip": true
+  },
+
+  "walkSpeed": 42,
+  "lines": [
+    "Selam! 👋",
+    "Bugün nasılsın?",
+    "Bir mola versene.",
+    "Beni sürükleyebilirsin!"
+  ]
+}
