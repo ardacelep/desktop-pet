@@ -454,6 +454,15 @@ OMUZ_ICERI = 0.18      # omuz basi, kolun govdeye baglandigi yer
 DIRSEK_ICERI = 0.08    # ust kol on koldan kalin, dirsek biraz daha iceride
 EL_ICERI = 0.04        # el neredeyse siluetin ucunda
 
+# OpenPose'da LEG = AYAK BILEGI, taban degil. Siluetin en alt satirini almak
+# noktalari ayakkabinin altina tasiriyordu (PixelLab'e karsi 4-8 piksel).
+# Olculdu: uc karakterde bilek, tabanin boyun %4.9 / %5.1 / %5.8 / %7.4 /
+# %8.6'si kadar ustunde. Ayakkabinin ust kenarini renkten bulmak denendi ve
+# TUTMADI — mag ve faküs'te ayakkabi bolgesi ayrismiyor, ael'de pacayla
+# birlesip 7.3 piksel sapiyor. Olculen sabit oran cok daha iyi: hata
+# -0.1 / -0.9 / +1.8 piksel.
+BILEK_PAYI = 0.06
+
 
 def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     """Tek bir karakter karesinden iskelet cikarir.
@@ -630,8 +639,8 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
         "LEFT ARM": (arka_el_x, el_y),
         "RIGHT HIP": (on_kalca_x, kalca_ust),
         "LEFT HIP": (arka_kalca_x, kalca_ust),
-        "RIGHT LEG": (on_ayak, float(y1)),
-        "LEFT LEG": (arka_ayak, float(y1)),
+        "RIGHT LEG": (on_ayak, float(y1) - BILEK_PAYI * h),
+        "LEFT LEG": (arka_ayak, float(y1) - BILEK_PAYI * h),
     }
     # Gozler once OLCULMEYE calisiliyor (sclera); bulunamazsa turetiliyor.
     olculen_goz = goz_satiri(rgba, y0, boyun_y)
