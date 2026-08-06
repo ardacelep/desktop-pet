@@ -176,6 +176,95 @@ def yuz_bolgesi(rgba: np.ndarray, tol: int = 24,
     return en_iyi
 
 
+def ayak_bolgeleri_renkten(rgba: np.ndarray, y0: int, y1: int, pay: float = 0.25,
+                           tol: int = 24, en_az: int = 15) -> list[float] | None:
+    """Iki bacagin merkez X'lerini RENK bolgelerinden bulur; olmazsa None.
+
+    Siluet bazen bacaklari ayirmiyor: bol pacali pantolonda iki paca tek
+    kutle oluyor ve `ayak_bantlari` tek bant donduruyor, iki ayak da ayni
+    noktaya cokuyor. Ama renkte ayriliyorlar — olculdu, faküs'un pacalari
+    ayri iki bolge (x37-44 ve x50-56) oldugu halde siluette tek bant (32-65).
+
+    Alt `pay` oraninda, birbirinden yatayda ayrik en buyuk iki bolge
+    araniyor."""
+    from pixelart_extract import label_components, merge_near_colors, pack_rgb
+
+    opak = rgba[:, :, 3] > 0
+    h = y1 - y0 + 1
+    alt = opak.copy()
+    alt[:y1 - int(pay * h), :] = False
+    if not alt.any():
+        return None
+
+    temiz = rgba.copy()
+    temiz[~opak] = 0
+    anah = pack_rgb(merge_near_colors(temiz, tol)[:, :, :3])
+
+    adaylar = []
+    for v in np.unique(anah[alt]):
+        etiket, n = label_components((anah == v) & alt)
+        for i in range(1, n + 1):
+            c = etiket == i
+            if int(c.sum()) < en_az:
+                continue
+            _, xx = np.where(c)
+            adaylar.append((int(c.sum()), float(xx.min()), float(xx.max())))
+    adaylar.sort(reverse=True)
+
+    for i in range(len(adaylar)):
+        for j in range(i + 1, len(adaylar)):
+            _, a0, a1 = adaylar[i]
+            _, b0, b1 = adaylar[j]
+            if a1 < b0 or b1 < a0:            # yatayda ortusmuyor: iki bacak
+                return sorted([(a0 + a1) / 2.0, (b0 + b1) / 2.0])
+    return None
+
+
+def uzuv_ust_satiri(rgba: np.ndarray, y0: int, y1: int, govde_x: float,
+                    tol: int = 24, en_az: int = 30) -> int | None:
+    """Yandaki UZUV bolgesinin ust kenari — omuz hizasi.
+
+    Omzu boyundan turetmek kirilgan: boyun sinyali olmayan bir karakterde
+    (sac omuzlara iniyor) hata omza da geciyor. Kol ise ayri bir renk bolgesi
+    olabiliyor ve tepesi dogrudan omuz demek.
+
+    Olculdu: faküs'un ciplak kolu y%32'de basliyor, PixelLab'in omzu 28.4 —
+    0.6 piksel. Kollu bir karakterde (mag) kol govdeyle ayni renkte oldugu
+    icin bolge ayrilmiyor ve None donuyor; orada mevcut yontem zaten 0.8
+    piksel isabetli, dolayisiyla dokunmaya gerek yok.
+
+    Aranan sey: govdenin YANINDA duran, dikey uzanan, ust yariya giren
+    bolge."""
+    from pixelart_extract import label_components, merge_near_colors, pack_rgb
+
+    opak = rgba[:, :, 3] > 0
+    h = y1 - y0 + 1
+    temiz = rgba.copy()
+    temiz[~opak] = 0
+    anah = pack_rgb(merge_near_colors(temiz, tol)[:, :, :3])
+
+    en_ust = None
+    for v in np.unique(anah[opak]):
+        etiket, n = label_components((anah == v) & opak)
+        for i in range(1, n + 1):
+            c = etiket == i
+            if int(c.sum()) < en_az:
+                continue
+            yy, xx = np.where(c)
+            yuk, gen = yy.max() - yy.min() + 1, xx.max() - xx.min() + 1
+            if yuk < 2 * gen:                       # dikey uzanmiyor
+                continue
+            if xx.min() > govde_x or xx.max() < govde_x:
+                pass                                # govdenin bir yaninda
+            else:
+                continue                            # govdenin uzerinde
+            if not (y0 + 0.20 * h <= yy.min() <= y0 + 0.55 * h):
+                continue
+            if en_ust is None or yy.min() < en_ust:
+                en_ust = int(yy.min())
+    return en_ust
+
+
 def boyun_satiri(opak: np.ndarray, y0: int, y1: int, marj: int = 3,
                  cene: int | None = None) -> int:
     """Boynun GOVDEYLE BIRLESTIGI satir.
@@ -418,10 +507,12 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     tepe = y0 + _bas + int(np.argmin(gen_prof[y0 + _bas:y0 + _son]))
     dar = sum(1 for y in range(tepe, min(y0 + int(0.60 * h), y1) + 1)
               if gen_prof[y] <= gen_prof[tepe] + 3)
-    if dar / h > 0.10:
-        supheli.update({"NECK", "RIGHT SHOULDER", "LEFT SHOULDER"})
-    if len(ayaklar) < 2:
-        supheli.update({"RIGHT LEG", "LEFT LEG", "RIGHT KNEE", "LEFT KNEE"})
+    boyun_belirsiz = dar / h > 0.10
+    # Isaretleme, belirsizligin KENDISINE degil GERI DUSUSE bakiyor: bagimsiz
+    # bir sinyal devreye girdiyse sonuc guvenilir olabiliyor. Ilk surum
+    # belirsizligi dogrudan isaretliyordu ve renk sinyalleri eklendikten sonra
+    # yanlis alarma donustu — faküs 12 eklem isaretliyken PixelLab'e karsi
+    # hatasi 2.65 piksele, yani mag'in altina inmisti.
 
     def uclar(y: int) -> tuple[float, float]:
         """Satirin en dis opak sutunlari; bos satirda govde eksenine duser."""
@@ -440,7 +531,20 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     kafa_x = satir_ortasi((y0 + boyun_y) // 2, govde_x)
     kafa_h = max(1.0, boyun_y - y0)
 
+    # Omuz hizasi iki bagimsiz tahminin YUKSEGI (kucuk y). Ikisi de yalnizca
+    # ASAGI yaniliyor, o yuzden yukseği almak ilkeli:
+    #   - boyundan turetilen tahmin, boyun asagida bulundugunda dusuyor
+    #     (faküs: sac omuzlara iniyor, boyun cukuru yok -> 13.2 piksel hata)
+    #   - uzuv tepesi, kolluk ust kolu ortunce dusuyor (mag: bolge ancak
+    #     kolun tenle gorunen on kismindan basliyor -> 5.4 piksel hata)
+    # PixelLab'e karsi olculdu: yuksegi alinca hata mag 0.5, ael 1.4,
+    # faküs 0.6 piksel.
     omuz_y = boyun_y + 0.05 * h
+    uzuv = uzuv_ust_satiri(rgba, y0, y1, govde_x) if not profil else None
+    if uzuv is not None:
+        omuz_y = min(omuz_y, float(uzuv))
+    if boyun_belirsiz and uzuv is None:
+        supheli.update({"NECK", "RIGHT SHOULDER", "LEFT SHOULDER"})
     kalca_ust = kalca_y - 0.04 * h      # eklem, bacaklarin ayrildigi yerin biraz ustu
     el_y = float(el_satiri(opak, int(omuz_y), int(kalca_y)))
 
@@ -482,7 +586,11 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
         olculen = frozenset({"NECK", "RIGHT LEG", "LEFT LEG"})
     else:
         # Onden: omuz ve el siluetin dis sutunlarindan OLCULUYOR.
-        sol_u, sag_u = uclar(omuz_y)
+        # Omuz X'i, omuz SATIRINDAN degil govdenin net goruldugu satirdan
+        # olculuyor. Sebep: uzuv tepesi omzu yukari cekince o satir sacin
+        # icine dusebiliyor ve siluet uclari govdeden cok daha genis cikiyor
+        # (faküs'te omuz X'i 4.5 piksel disari tasiyordu).
+        sol_u, sag_u = uclar(max(omuz_y, boyun_y + 0.05 * h))
         on_omuz, arka_omuz = sol_u + OMUZ_ICERI * genis, sag_u - OMUZ_ICERI * genis
         el_sol, el_sag = uclar(el_y)
         on_el_x, arka_el_x = el_sol + EL_ICERI * genis, el_sag - EL_ICERI * genis
@@ -500,12 +608,18 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     # Bu tam olarak olan seydi: onden gorunuste omuz/kalca kucuk x'e (RIGHT),
     # ayak buyuk x'e atanip iskelet X ciziyordu. Onden bakan bir karakterde
     # (south) karakterin SAGI izleyicinin SOLUdur, yani kucuk x.
+    ters = (yon > 0) if profil else (direction == "north")
     if len(ayaklar) >= 2:
-        ters = (yon > 0) if profil else (direction == "north")
         sirali = sorted(ayaklar, key=_orta, reverse=ters)
         on_ayak, arka_ayak = _orta(sirali[0]), _orta(sirali[-1])
     else:
-        on_ayak = arka_ayak = _orta(ayaklar[0]) if ayaklar else govde_x
+        # Siluet ayirmadi. Renk bolgeleri ayirabiliyor mu?
+        renkten = ayak_bolgeleri_renkten(rgba, y0, y1) if not profil else None
+        if renkten:
+            on_ayak, arka_ayak = (renkten[::-1] if ters else renkten)
+        else:
+            on_ayak = arka_ayak = _orta(ayaklar[0]) if ayaklar else govde_x
+            supheli.update({"RIGHT LEG", "LEFT LEG", "RIGHT KNEE", "LEFT KNEE"})
 
     n: dict[str, tuple[float, float]] = {
         "NOSE": (kafa_x + (yon * 0.22 * kafa_h if profil else 0.0), kafa_y),
@@ -521,10 +635,10 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     }
     # Gozler once OLCULMEYE calisiliyor (sclera); bulunamazsa turetiliyor.
     olculen_goz = goz_satiri(rgba, y0, boyun_y)
-    if olculen_goz is None:
-        # Sclera yok (koyu goz, gozluk, kapali goz). Yuz noktalari kafa
-        # KUTUSUNDAN turetiliyor ve kutu saci da iceriyor; sacli bir
-        # karakterde bu belirgin sekilde kayiyor.
+    if olculen_goz is None and yuz is None:
+        # Ne sclera ne yuz kutusu var: yuz noktalari kafa KUTUSUNDAN
+        # turetiliyor ve kutu saci da iceriyor. Yuz kutusu varsa sonuc makul,
+        # o yuzden yalnizca ikisi de yoksa isaretleniyor.
         supheli.update({"RIGHT EYE", "LEFT EYE", "NOSE", "RIGHT EAR", "LEFT EAR"})
     if olculen_goz is not None:
         goz_y, kumeler = olculen_goz
@@ -589,6 +703,20 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
         n["LEFT ELBOW"] = dirsek(n["LEFT SHOULDER"], n["LEFT ARM"], False)
     n["RIGHT KNEE"] = uzuv(n["RIGHT HIP"], n["RIGHT LEG"])
     n["LEFT KNEE"] = uzuv(n["LEFT HIP"], n["LEFT LEG"])
+
+    # BOYUN, iki omuzun orta noktasi olarak TURETILIYOR — olculmuyor.
+    # Bu OpenPose COCO-18'in tanimi: COCO'da boyun anotasyonu yoktur, OpenPose
+    # onu omuzlardan uretir. PixelLab de aynisini yapiyor ve bu olculdu — alti
+    # ayri sorgunun hepsinde boyun ile omuz ortasi bes ondalik basamaga kadar
+    # birebir ayni cikti (fark 0.00000).
+    #
+    # Bizde ise boyun OLCULUP omuzlar ondan turetiliyordu, yani zincir tersti.
+    # Bu, boyun sinyali olmayan karakterde (faküs: sac omuzlara iniyor) hatayi
+    # omza tasiyordu. Artik olcum omuzda, boyun ondan geliyor.
+    # `boyun_y` yine de ic olcum capasi olarak duruyor (goz aramasinin ust
+    # siniri, el yuksekligi vb.).
+    n["NECK"] = ((n["RIGHT SHOULDER"][0] + n["LEFT SHOULDER"][0]) / 2.0,
+                 (n["RIGHT SHOULDER"][1] + n["LEFT SHOULDER"][1]) / 2.0)
 
     # Profilde on uzuv kameraya yakin: z buyuk. Onden bakista derinlik farki
     # yok, z sifir kaliyor.

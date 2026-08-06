@@ -322,7 +322,17 @@ def test_zayif_sinyal_isaretleniyor():
 
 
 def test_gercek_karakterlerde_zayif_sinyal():
-    """faküs disindaki karakterlerde uyari cikmamali (yanlis alarm olcumu)."""
+    """Depodaki hicbir karakterde uyari cikmamali.
+
+    Bir donem faküs 12 eklem isaretliyordu; renk sinyalleri (yuz kutusu, uzuv
+    tepesi, renkten ayak ayrimi) eklendikten sonra o eklemler artik dogru
+    bulunuyor ve isaret yanlis alarma donusmustu. Isaretleme belirsizligin
+    KENDISINE degil GERI DUSUSE bakacak sekilde degistirildi; bu test o
+    yanlis alarmin geri gelmedigini kontrol ediyor.
+
+    Olculdu (PixelLab'e karsi ortalama sapma): mag 2.80px, ael 3.20px,
+    faküs 2.65px — yani faküs artik en iyilerden."""
+    bakilan = 0
     for ad, meta, dizin in karakterler():
         if "idle" not in meta:
             continue
@@ -330,13 +340,10 @@ def test_gercek_karakterlerde_zayif_sinyal():
         sh = np.array(Image.open(os.path.join(dizin, meta["idle"]["file"]))
                       .convert("RGBA"))
         isk = sk.estimate(sh[:, :k], direction="south")
-        if ad == "faküs":
-            check(f"{ad}: yapisal farklilik yakalandi", len(isk.supheli) >= 6,
-                  f"{len(isk.supheli)} isaret")
-            check(f"{ad}: bel isaretlenmedi", "RIGHT HIP" not in isk.supheli)
-        else:
-            check(f"{ad}: yanlis alarm yok", not isk.supheli,
-                  f"supheli={sorted(isk.supheli)}")
+        bakilan += 1
+        check(f"{ad}: yanlis alarm yok", not isk.supheli,
+              f"supheli={sorted(isk.supheli)}")
+    check("zayif sinyal: karakterler tarandi", bakilan >= 4, f"{bakilan}")
 
 
 def test_pixellab_formati():
