@@ -427,6 +427,18 @@ def adim_grid_ref() -> None:
         print("  prompt PROMPTS.md'de 3. bölümde.")
 
 
+def adim_iskelet() -> None:
+    """Tarayıcıda iskelet düzenleyiciyi açar."""
+    print("\n— İskelet düzenleyici (skeleton_edit.py) —")
+    print("  Tarayıcıda açılır; sprite'ı pencereye sürüklersin, iskelet")
+    print("  otomatik çıkarılır, eklemleri fareyle düzeltirsin.")
+    print("  Otomatik tespitin garantisi yok: cübbeli, dört ayaklı ya da çok")
+    print("  küçük figürlerde şaşıyor — düzeltme adımı bu yüzden var.")
+    print("  Sarı noktalar türetilmiştir, önce onlara bak.")
+    print("\n  Kapatmak için o terminalde Ctrl-C.")
+    arac("skeleton_edit.py")
+
+
 def adim_rig() -> None:
     """Tek kareden kukla kurup yeni pozlar üretir."""
     print("\n— Poz üret (rig_pose.py) —")
@@ -462,7 +474,7 @@ def adim_test() -> None:
     """Araçların kendi regresyon testleri."""
     print("\n— Araç testleri —")
     for dosya in ("test_pixelart_extract.py", "test_split_sheet.py",
-                  "test_pack_sheet.py", "test_grid_ref.py"):
+                  "test_pack_sheet.py", "test_grid_ref.py", "test_skeleton.py"):
         if not arac(dosya):
             print(f"\n✗ {dosya} başarısız.")
             return
@@ -479,6 +491,7 @@ MENU = [
     ("Sheet'i karelere böl", "split_sheet", lambda: adim_split()),
     ("Kareleri hizala/paketle", "pack_sheet", lambda: adim_pack()),
     ("Izgara referansı üret (Gemini için)", "grid_ref", adim_grid_ref),
+    ("İskelet çıkar ve düzelt", "skeleton_edit", adim_iskelet),
     ("Poz üret", "rig_pose", adim_rig),
     ("Karakterleri doğrula", "check-characters", adim_check),
     ("Araç testlerini çalıştır", "test:tools", adim_test),
