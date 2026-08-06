@@ -238,6 +238,44 @@ def test_el_kolun_bittigi_yerde():
           f"{[round(isk.noktalar[a][0], 1) for a in ('RIGHT ARM', 'LEFT ARM')]}")
 
 
+def test_yuz_renkten_bulunuyor():
+    """Sacli karakterde yuz SILUETTEN degil RENKTEN bulunmali.
+
+    Siluet kafayi sacla birlikte tek kutle sayiyor; gozler ve kulaklar kafa
+    kutusundan turetilince saca biniyor. Olculdu — faküs'te kulaklar x28/62
+    cikiyordu, oysa yuz x42-52 arasinda.
+
+    Yuz semantikle degil YAPIYLA taniniyor: goruntunun ust yarisina tamamen
+    sigan en buyuk bagli renk bolgesi. Boylece "ten rengi su araliktadir"
+    gibi, cizim tarzi degisince kirilacak bir kural gerekmiyor."""
+    im = figur(kafa_w=26, tuval=90)
+    # Sac: kafanin iki yanina, yuzden farkli renkte ve ASAGI TASAN
+    im[6:46, 26:32] = (60, 30, 20, 255)
+    im[6:46, 58:64] = (60, 30, 20, 255)
+    # Yuz: kafanin ortasi
+    im[8:28, 34:56] = (230, 180, 150, 255)
+
+    yuz = sk.yuz_bolgesi(im)
+    check("yuz: bulundu", yuz is not None)
+    if yuz is None:
+        return
+    y_ust, y_alt, x_sol, x_sag = yuz
+    check("yuz: sac degil yuz secildi", 32 < x_sol and x_sag < 58,
+          f"x{x_sol}-{x_sag}, sac 26-32 ve 58-64'te")
+    check("yuz: dikey kutu dogru", 6 <= y_ust and y_alt <= 30,
+          f"y{y_ust}-{y_alt}")
+
+    isk = sk.estimate(im, direction="south")
+    check("yuz: kulaklar yuzun kenarinda",
+          x_sol - 1 <= isk.noktalar["RIGHT EAR"][0] <= x_sag + 1
+          and x_sol - 1 <= isk.noktalar["LEFT EAR"][0] <= x_sag + 1,
+          f"{isk.noktalar['RIGHT EAR'][0]:.1f} / {isk.noktalar['LEFT EAR'][0]:.1f}")
+    check("yuz: gozler yuz kutusunda",
+          all(x_sol <= isk.noktalar[a][0] <= x_sag and y_ust <= isk.noktalar[a][1] <= y_alt
+              for a in ("RIGHT EYE", "LEFT EYE")),
+          f"{[tuple(round(v, 1) for v in isk.noktalar[a]) for a in ('RIGHT EYE', 'LEFT EYE')]}")
+
+
 def test_zayif_sinyal_isaretleniyor():
     """Olcum YAPILDI ile olcum ANLAMLI ayni sey degil.
 
@@ -557,6 +595,7 @@ def main():
         test_onden_zincir_caprazlamiyor,
         test_dirsek_kolun_uzerinde,
         test_el_kolun_bittigi_yerde,
+        test_yuz_renkten_bulunuyor,
         test_zayif_sinyal_isaretleniyor,
         test_gercek_karakterlerde_zayif_sinyal,
         test_pixellab_formati,

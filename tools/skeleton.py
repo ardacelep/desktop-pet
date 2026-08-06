@@ -129,7 +129,55 @@ def bantlar(maske: np.ndarray, bosluk: int = 1) -> list[tuple[int, int]]:
     return [(int(x), int(y)) for x, y in zip(b, e)]
 
 
-def boyun_satiri(opak: np.ndarray, y0: int, y1: int, marj: int = 3) -> int:
+def yuz_bolgesi(rgba: np.ndarray, tol: int = 24,
+                en_az: int = 24) -> tuple[int, int, int, int] | None:
+    """Yuz kutusunu (y_ust, y_alt, x_sol, x_sag) renk bolgelerinden bulur.
+
+    NEDEN RENK: siluet tek basina yetmiyor. Sac omuzlara inen bir karakterde
+    kafa ile govde tek kutle oluyor ve boyun cukuru kayboluyor (olculdu —
+    faküs'te boyun 26 piksel, gogüs 25-27). Ama RENKTE ayriliyorlar.
+
+    AI ile uretildikleri icin bu sprite'lar dar paletli degil (faküs 1425
+    renk). Yakin renkler birlestirilince duzeliyor: tol=24 ile faküs 14
+    bolgeye iniyor ve ten bolgeleri temiz ayrisiyor.
+
+    Yuzu SEMANTIK olarak tanimlamiyoruz ("ten rengi su araliktadir" gibi bir
+    kural cizim tarzi degisince kirilir). Yapisal olcut: goruntunun ust
+    yarisina TAMAMEN sigan en buyuk bagli bolge. Bes karakterde de yuzu
+    veriyor — sac ve kiyafet bolgeleri ya alt yariya tasiyor ya daha kucuk.
+
+    Bulunamazsa None; cagiran siluet olcumune duser."""
+    from pixelart_extract import label_components, merge_near_colors, pack_rgb
+
+    opak = rgba[:, :, 3] > 0
+    ys, _ = np.where(opak)
+    if ys.size == 0:
+        return None
+    y0, y1 = int(ys.min()), int(ys.max())
+    orta = y0 + (y1 - y0 + 1) / 2.0
+
+    temiz = rgba.copy()
+    temiz[~opak] = 0
+    anah = pack_rgb(merge_near_colors(temiz, tol)[:, :, :3])
+
+    en_iyi, en_buyuk = None, en_az - 1
+    for v in np.unique(anah[opak]):
+        etiket, n = label_components((anah == v) & opak)
+        for i in range(1, n + 1):
+            c = etiket == i
+            boyut = int(c.sum())
+            if boyut <= en_buyuk:
+                continue
+            yy, xx = np.where(c)
+            if yy.max() > orta:                 # ust yariya sigmiyor
+                continue
+            en_iyi = (int(yy.min()), int(yy.max()), int(xx.min()), int(xx.max()))
+            en_buyuk = boyut
+    return en_iyi
+
+
+def boyun_satiri(opak: np.ndarray, y0: int, y1: int, marj: int = 3,
+                 cene: int | None = None) -> int:
     """Boynun GOVDEYLE BIRLESTIGI satir.
 
     Once %25-55 bandindaki en dar satir bulunuyor (bant sart: profilin global
@@ -147,6 +195,12 @@ def boyun_satiri(opak: np.ndarray, y0: int, y1: int, marj: int = 3) -> int:
     h = y1 - y0 + 1
     gen = opak.sum(axis=1)
     bas, son = int(0.25 * h), max(int(0.25 * h) + 1, int(0.55 * h))
+    if cene is not None:
+        # Yuz kutusu biliniyorsa arama CENENIN ALTINDAN basliyor. Sabit %25
+        # bandi sacli karakterde cok genis kaliyor ve minimum gogse kadar
+        # kayabiliyordu.
+        bas = max(0, min(int(cene - y0), h - 2))
+        son = max(bas + 1, min(h, bas + int(0.30 * h)))
     tepe = y0 + bas + int(np.argmin(gen[y0 + bas:y0 + son]))
     sinir = y0 + int(0.60 * h)
     alt = tepe
@@ -342,7 +396,8 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     profil = direction in PROFIL_YONLERI
     yon = 1.0 if direction in ("east", "south") else -1.0
 
-    boyun_y = boyun_satiri(opak, y0, y1)
+    yuz = yuz_bolgesi(rgba)
+    boyun_y = boyun_satiri(opak, y0, y1, cene=yuz[1] if yuz else None)
     kalca_y = kalca_satiri(opak, y0, y1)
     ayaklar = ayak_bantlari(opak, y0, y1)
 
@@ -489,6 +544,16 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     elif profil:
         n["RIGHT EYE"] = (kafa_x + yon * 0.28 * kafa_h, kafa_y - 0.10 * kafa_h)
         n["LEFT EYE"] = (kafa_x + yon * 0.12 * kafa_h, kafa_y - 0.10 * kafa_h)
+    elif yuz is not None:
+        # Sclera yok ama YUZ KUTUSU var: gozler kutunun ortasinda, yatayda
+        # dortte bir ve ucte birde. Kafa kutusundan turetmekten cok daha
+        # iyi, cunku kafa kutusu SACI da iceriyor ve sacli bir karakterde
+        # noktalari alina tasiyor.
+        fy0, fy1, fx0, fx1 = yuz
+        gy = (fy0 + fy1) / 2.0
+        fw = max(1.0, fx1 - fx0)
+        n["RIGHT EYE"] = (fx0 + 0.25 * fw, gy)
+        n["LEFT EYE"] = (fx0 + 0.75 * fw, gy)
     else:
         n["RIGHT EYE"] = (kafa_x - 0.20 * kafa_h, kafa_y - 0.10 * kafa_h)
         n["LEFT EYE"] = (kafa_x + 0.20 * kafa_h, kafa_y - 0.10 * kafa_h)
@@ -506,6 +571,12 @@ def estimate(rgba: np.ndarray, direction: str = "south") -> Iskelet:
     if profil:
         n["RIGHT EAR"] = (kafa_x - yon * 0.15 * kafa_h, kulak_y)
         n["LEFT EAR"] = (kafa_x - yon * 0.22 * kafa_h, kulak_y)
+    elif yuz is not None:
+        # Kulaklar YUZUN kenarinda. Siluetin kenarini kullanmak sacli
+        # karakterde noktalari sacin dis hattina atiyordu — faküs'te kulaklar
+        # x28/62'ye dusuyordu, yuz ise x42-52 arasinda.
+        n["RIGHT EAR"] = (float(yuz[2]), kulak_y)
+        n["LEFT EAR"] = (float(yuz[3]), kulak_y)
     else:
         n["RIGHT EAR"] = (kulak_sol, kulak_y)
         n["LEFT EAR"] = (kulak_sag, kulak_y)
