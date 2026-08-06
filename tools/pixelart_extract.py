@@ -984,7 +984,8 @@ def background_to_alpha(small: np.ndarray, field: BackgroundToneField,
 # ---------------------------------------------------------------------------
 
 def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
-                               tol: int, share: float = 0.7) -> np.ndarray:
+                               tol: int, share: float = 0.7,
+                               ana_pay: float = 0.25) -> np.ndarray:
     """Ana silüetten kopuk VE dama renginde olan parcalari siler.
 
     Dama sinirina denk gelen bazi hucreler iki tonun arasinda bir renk aliyor ve
@@ -1004,7 +1005,12 @@ def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
     bastaki iki ton degil, gercekten silinmis piksellerin renkleri.
 
     Bu gevsek olcut yalnizca KOPUK parcalara uygulandigi icin guvenli — ana
-    silüete uygulansa karakterin gri tonlarini yerdi."""
+    silüete uygulansa karakterin gri tonlarini yerdi.
+
+    ONEMLI: "kopuk olmak" tek basina yetmiyor. Sprite sheet'te kareler
+    birbirinden kopuk oldugu icin karakterlerin hepsi (en buyugu haric)
+    kopuk sayiliyor. O yuzden ayrica BOYUT sarti var: ana siluetin
+    `ana_pay` katindan buyuk parcalar korunuyor (bkz. asagidaki not)."""
     if field.empty:
         return rgba
     rgba = rgba.copy()
@@ -1035,6 +1041,19 @@ def remove_background_remnants(rgba: np.ndarray, field: BackgroundToneField,
     yakin = np.bincount(lbl_of_px, weights=near_px, minlength=num + 1)
     sil = yakin / np.maximum(toplam, 1) >= share   # (near <= wide).mean() >= share
     sil[0] = sil[main] = False
+
+    # ANA SILUETE YAKIN BUYUKLUKTEKI parcalar korunuyor. Ustteki renk olcutu
+    # "yalnizca kopuk parcalara uygulaniyor" diye guvenli sayilmisti; o gerekce
+    # TEK silueti olan bir goruntu varsayiyor. Sprite SHEET'te ise kareler
+    # birbirinden kopuk oldugu icin karakterlerin hepsi (en buyugu haric)
+    # "kopuk parca" sayiliyor ve olcut onlara da uygulaniyor.
+    #
+    # Olculdu: 3x3 izgarada gurultulu bir render tolerans 31 sectirdi, esik
+    # tol*3 = 93'e cikti ve bu yaricapta karakterin renkleri de arka plan
+    # gamutuna giriyor — 8 karakterin 5'i silindi. Kalinti serit ile karakter
+    # arasindaki gercek fark BOYUT: kalintilar ince seritler, kareler ise ana
+    # siluetle ayni mertebede.
+    sil &= sizes < sizes[main] * ana_pay
     rgba[sil[labels]] = (0, 0, 0, 0)
     return rgba
 

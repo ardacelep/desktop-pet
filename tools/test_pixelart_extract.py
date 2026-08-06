@@ -794,6 +794,45 @@ def make_high_cardinality(w: int = 768, h: int = 768, seed: int = 99,
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def test_sheet_kareleri_kalinti_sanilmiyor():
+    """REGRESYON: sprite SHEET'te kareler birbirinden kopuk oldugu icin
+    `remove_background_remnants` karakterlerin hepsini (en buyugu haric) "kopuk
+    parca" sayiyor ve gevsek RENK olcutunu onlara da uyguluyordu.
+
+    Olculen gercek vaka: 3x3 izgarali gurultulu bir Gemini ciktisi tolerans 31
+    sectirdi, esik tol*3 = 93'e cikti ve o yaricapta karakterin renkleri de arka
+    plan gamutuna girdi — 8 karakterin 5'i silindi. Kalinti ile kare arasindaki
+    gercek fark BOYUT: kalintilar ince serit, kareler ana siluetle ayni mertebede.
+    """
+    h, w = 40, 200
+    rgba = np.zeros((h, w, 4), np.uint8)
+    # Seffaf pikseller RGB'lerini KORUR (background_to_alpha yalnizca alfayi
+    # sifirliyor); onaylanmis arka plan gamutu tam da oradan ogreniliyor.
+    yy, xx = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
+    dama = ((yy // 4) + (xx // 4)) % 2
+    rgba[:, :, :3] = np.where(dama[..., None] == 0,
+                              np.array([255, 0, 255], np.uint8),
+                              np.array([192, 0, 192], np.uint8))
+    # Bes esit buyuklukte, birbirinden KOPUK "karakter"; rengi damaya yakin
+    # tutuluyor ki eski kod onlari kalinti sansin.
+    for i in range(5):
+        x = 6 + i * 38
+        rgba[8:32, x:x + 24] = (200, 40, 200, 255)
+    # tek bir ince kalinti seridi — bunun silinmesi BEKLENIYOR
+    rgba[36:38, 6:40] = (205, 20, 205, 255)
+
+    tones = [(255, 0, 255), (192, 0, 192)]
+    field = px.BackgroundToneField(rgba[:, :, :3].copy(), tones)
+    temiz = px.remove_background_remnants(rgba, field, tol=31)
+
+    _, kalan = px.label_components(temiz[:, :, 3] > 0, connectivity=8)
+    check("sheet: bes kare de korundu", kalan >= 5,
+          f"{kalan} bilesen kaldi — kareler kalinti sanilmis")
+    check("sheet: ince kalinti serisi silindi",
+          not (temiz[36:38, 6:40, 3] > 0).any(),
+          "boyut siniri kalintiyi da koruyor, olcut ise yaramiyor")
+
+
 def test_gamut_query_is_exact():
     """within_gamut'un iki yolu (dogrudan yayin / RGB kupu) AYNI sonucu vermeli.
 
@@ -909,6 +948,7 @@ if __name__ == "__main__":
         test_singleton_keeps_supported_detail,
         test_cell_support_measures_source,
         test_single_pixel_highlight_survives_pipeline,
+        test_sheet_kareleri_kalinti_sanilmiyor,
         test_gamut_query_is_exact,
         test_high_cardinality_bounded,
         test_helpers,
