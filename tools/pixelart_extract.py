@@ -1700,13 +1700,43 @@ def extract_per_frame(arr: np.ndarray, center_ratio: float = 0.5,
     return serit, boylar, round(hedef)
 
 
+def referans_native_olcu(yol: str) -> tuple[int, int]:
+    """Bir IZGARA REFERANSININ native olcusunu (genislik, yukseklik) dondurur.
+
+    Referansi grid_ref.py uretiyor, yani makine isi: bloklari tam sayi katlarla
+    buyutulmus ve dama izgaraya hizali. Bu yuzden uzerinde izgara tespiti
+    guvenilir calisiyor ve olcuyu oradan okumak, hedef goruntude yeniden
+    tespit etmeye gore cok daha saglam."""
+    arr, _ = load_image(yol)
+    gx, gy = detect_grid(arr)
+    return gx.count, gy.count
+
+
+def izgarayi_referanstan_kur(arr: np.ndarray, nat_w: int, nat_h: int
+                             ) -> tuple[AxisGrid, AxisGrid]:
+    """Native olcu BILINIYORKEN izgarayi kurar: periyot dayatilir, yalnizca faz aranir.
+
+    Kazanc arama uzayinda: normal tespit periyot ve fazi BIRLIKTE ariyor ve
+    yeniden kodlanmis bir render'da hicbir aday belirgin sekilde one cikmiyor
+    (olculen bir sheet'te en iyi oran 3.11, esik 3.0 — kil payi). Periyot
+    disaridan verilince geriye tek boyutlu bir faz aramasi kaliyor, o da
+    tek tepeli ve saglam."""
+    H, W = arr.shape[:2]
+    px_, py_ = W / nat_w, H / nat_h
+    fx = AxisVariance(arr, 1).best_phase(px_)[0]
+    fy = AxisVariance(arr, 0).best_phase(py_)[0]
+    gx = AxisGrid(px_, fx, len(lattice_edges(px_, fx, W)) - 1, 1.0)
+    gy = AxisGrid(py_, fy, len(lattice_edges(py_, fy, H)) - 1, 1.0)
+    return gx, gy
+
+
 def extract(input_path: str, output_path: str, preview_path: str | None = None,
             preview_scale: int = 8, bg_tol: int | None = None, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
             no_crop: bool = False, merge_colors: int = 0,
             cleanup: bool = True, verify: bool = False,
             fill_gaps: int = 0, period: float | None = None,
-            per_frame: bool = False) -> Image.Image:
+            per_frame: bool = False, like_ref: str | None = None) -> Image.Image:
     arr, real_alpha = load_image(input_path)
     H, W = arr.shape[:2]
     print(f"Girdi: {input_path} ({W}x{H})")
@@ -1721,6 +1751,16 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
         gx = AxisGrid(period=1.0, phase=0.0, count=W, quality=1.0)
         gy = AxisGrid(period=1.0, phase=0.0, count=H, quality=1.0)
         small = arr.copy()
+    elif like_ref:
+        nat_w, nat_h = referans_native_olcu(like_ref)
+        gx, gy = izgarayi_referanstan_kur(arr, nat_w, nat_h)
+        print(f"Izgara REFERANSTAN kuruldu ({os.path.basename(like_ref)}): "
+              f"native {gx.count}x{gy.count}, periyot X={gx.period:.4f} Y={gy.period:.4f}, "
+              f"faz X={gx.phase:.2f} Y={gy.phase:.2f}")
+        if debug_dir:
+            os.makedirs(debug_dir, exist_ok=True)
+            dump_grid_overlay(arr, gx, gy, os.path.join(debug_dir, "1_izgara.png"))
+        small = downsample_by_mode(arr, gx, gy, center_ratio=center_ratio)
     elif per_frame:
         small, boylar, hedef = extract_per_frame(arr, center_ratio=center_ratio)
         gx = AxisGrid(period=1.0, phase=0.0, count=small.shape[1], quality=1.0)
@@ -1908,6 +1948,11 @@ def main(argv=None):
                         help="Izgara periyodunu ELLE ver (blok kenari, piksel). Tespit "
                              "'render cok bozuk' deyip durduysa kullanin: periyot = "
                              "sheet'teki karakter yuksekligi / native yukseklik.")
+    parser.add_argument("--like-ref", metavar="REF.PNG",
+                        help="Izgarayi bu REFERANSTAN kur (grid_ref.py ciktisi). "
+                             "Hedef native olcu referanstan okunur, periyot dayatilir "
+                             "ve yalnizca faz aranir — tespit kil payi kaldiginda "
+                             "bundan cok daha saglam.")
     parser.add_argument("--per-frame", action="store_true",
                         help="Her kareyi KENDI izgarasiyla cikarir. Gemini kareleri\n"
                              "farkli piksel olceginde cizdiyse (global tespit 'render cok\n"
@@ -1927,7 +1972,7 @@ def main(argv=None):
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
                 cleanup=not args.no_cleanup, verify=args.verify,
                 fill_gaps=args.fill_gaps, period=args.period,
-                per_frame=args.per_frame)
+                per_frame=args.per_frame, like_ref=args.like_ref)
     except (ValueError, FileNotFoundError) as err:
         print(f"HATA: {err}", file=sys.stderr)
         return 1

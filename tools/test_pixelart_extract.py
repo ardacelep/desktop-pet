@@ -795,6 +795,35 @@ def make_high_cardinality(w: int = 768, h: int = 768, seed: int = 99,
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
+def test_like_ref_geometriyi_dayatiyor():
+    """--like-ref, hedef native olcuyu REFERANSTAN okuyup dayatmali.
+
+    Kazanc arama uzayinda: normal tespit periyot ve fazi birlikte ararken,
+    periyot disaridan verilince geriye tek boyutlu bir faz aramasi kaliyor.
+    Bu, tespitin kil payi kaldigi render'larda geometrinin en azindan DOGRU
+    olmasini garanti ediyor (kaynagin kendi kalitesini duzeltmez)."""
+    sprite, mask = make_sprite(40, 40, seed=8)
+    ref = render_like_gemini(sprite, mask, 480,
+                             checker_colors=((255, 0, 255), (192, 0, 192)))
+    hedef = render_like_gemini(sprite, mask, 600,
+                               checker_colors=((255, 0, 255), (192, 0, 192)))
+    with tempfile.TemporaryDirectory() as tmp:
+        rp = os.path.join(tmp, "ref.png")
+        hp = os.path.join(tmp, "hedef.png")
+        op = os.path.join(tmp, "out.png")
+        Image.fromarray(ref).save(rp)
+        Image.fromarray(hedef).save(hp)
+
+        nw, nh = px.referans_native_olcu(rp)
+        check("like-ref: referansin native olcusu okundu", (nw, nh) == (40, 40),
+              f"{nw}x{nh}")
+
+        px.extract(hp, op, no_crop=True, cleanup=False, like_ref=rp)
+        out = np.array(Image.open(op).convert("RGBA"))
+    check("like-ref: cikti referansin olcusunde", out.shape[:2] == (nh, nw),
+          f"{out.shape[1]}x{out.shape[0]}, beklenen {nw}x{nh}")
+
+
 def test_kare_kare_farkli_olcek():
     """REGRESYON: bir Gemini sheet'inde izgara SATIRLARININ her biri farkli
     piksel olceginde cizilmisti (olculdu: 8.67 / ~8.0 / ~7.3 px blok, yani
@@ -999,6 +1028,7 @@ if __name__ == "__main__":
         test_singleton_keeps_supported_detail,
         test_cell_support_measures_source,
         test_single_pixel_highlight_survives_pipeline,
+        test_like_ref_geometriyi_dayatiyor,
         test_kare_kare_farkli_olcek,
         test_sheet_kareleri_kalinti_sanilmiyor,
         test_gamut_query_is_exact,
