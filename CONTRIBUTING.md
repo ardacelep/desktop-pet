@@ -60,6 +60,41 @@ Gemini animasyonu **tek bir sheet** olarak ürettiyse önce tüm sheet'i çıkar
 
 Klasör adları için küçük harf + ASCII kullan (`karakter2`, `kedi`). macOS büyük/küçük harfe duyarsız ama Linux (ve CI) duyarlı — `Kedi` ile `kedi` orada iki ayrı klasör olur.
 
+## Konuşma balonu asset'leri
+
+Balon `renderer/ui/` altında, **native çözünürlükte** (1x) duruyor. Ölçekleme
+uygulamada, karakterle aynı katsayıyla yapılıyor — asset'i büyük çizip
+küçültmeyin.
+
+| Dosya | Boyut | Yapı |
+| --- | --- | --- |
+| `bubble.png` | 16×16 | 9-slice: köşe 4×4, kenar dilimi 8px |
+| `bubble_tail.png` | 8×6 | aşağı bakan kuyruk; sağa bakan çizilir, kodda flip edilir |
+
+Balon her metin uzunluğuna esnediği için sabit bir resim değil, 9-slice: köşeler
+1:1 kalır, **kenarlar ve orta tile edilir** (esnetilmez). Bu yüzden tek kritik
+kural şu: kenar dilimleri kendi kendine tekrarlandığında dikiş görünmemeli. En
+güvenlisi kenarları düz tutup (1px hat + dolgu) süslemeyi köşelere koymak.
+
+Açılış animasyonu için sprite sheet çizmeyin — her metin uzunluğu ayrı sheet
+gerektirirdi. "Pop" efekti kutu boyutunu kare kare değiştirerek kodda üretiliyor
+(`speech-bubble.js`, `ACILIS` dizisi).
+
+Depodakiler geçici placeholder; üzerine kendi çiziminizi koyabilirsiniz.
+`npm run check:bubble` balonu ölçüp `$TMPDIR/pet-balon*.png` altına ekran
+görüntüsü bırakır.
+
+### Metin ve font
+
+Metin `renderer/fonts/PixelifySans.ttf` ile çiziliyor (OFL, lisans yanında).
+Font bir outline fontu, gerçek bitmap değil — o yüzden metin native boyutta
+çizilip **alfa eşiklemesinden** geçiriliyor, yani çalışma anında bitmap'e
+çevriliyor (`pixel-text.js`). Ölçekleme bundan sonra.
+
+Font boyutu 10 native px'e sabit: ölçüldü, 6–8px'te eşikleme sonrası `ı`/`İ`/`ğ`
+ayırt edilemiyor. Replikleri yazarken **emoji kullanmayın** — pixel fontta
+karşılığı yok.
+
 ## Kod değişiklikleri
 
 | Dosya | Sorumluluk |
@@ -68,7 +103,8 @@ Klasör adları için küçük harf + ASCII kullan (`karakter2`, `kedi`). macOS 
 | `preload.js` | Renderer'a açılan API yüzeyi |
 | `renderer/pet.js` | Durum makinesi ve davranış |
 | `renderer/sprite-animator.js` | Kare çizimi |
-| `renderer/speech-bubble.js` | Konuşma balonu |
+| `renderer/speech-bubble.js` | Konuşma balonu: 9-slice çerçeve, kuyruk, pop animasyonu |
+| `renderer/pixel-text.js` | Pixel font metin motoru (satır sarma + alfa eşikleme) |
 
 Renderer'ın Node'a doğrudan erişimi yok (`contextIsolation` açık). Yeni bir ana süreç yeteneği gerekiyorsa `preload.js`'e açıkça eklenmeli.
 

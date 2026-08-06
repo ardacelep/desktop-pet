@@ -41,7 +41,10 @@ pet/
 │   ├── index.html
 │   ├── pet.css
 │   ├── sprite-animator.js  # Sprite sheet → canvas, dt tabanlı kare ilerletme, flip
-│   ├── speech-bubble.js    # Konuşma balonu UI'ı
+│   ├── pixel-text.js       # Pixel font metin motoru (satır sarma + alfa eşikleme)
+│   ├── speech-bubble.js    # Piksel konuşma balonu: 9-slice çerçeve, kuyruk, pop
+│   ├── fonts/              # PixelifySans.ttf + OFL.txt (lisans)
+│   ├── ui/                 # bubble.png, bubble_tail.png (native çözünürlük)
 │   └── pet.js              # Durum makinesi, davranış, etkileşimler
 ├── characters/
 │   ├── characters.json     # Sadece varsayılan karakter (nadiren değişir)
@@ -53,6 +56,7 @@ pet/
 │   ├── menu.py                   # Tüm araçlar için etkileşimli menü (npm run tools)
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
 │   ├── selftest-hittest.js       # Tıklama geçirgenliği testi (npm run check:hittest)
+│   ├── selftest-bubble.js        # Konuşma balonu testi (npm run check:bubble)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
 │   ├── split_sheet.py            # Sheet'i tek tek karelere böler
 │   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar

@@ -1,4 +1,4 @@
-/* global SpriteAnimator, SpeechBubble, loadImage, measureContent */
+/* global SpriteAnimator, SpeechBubble, PixelText, loadImage, measureContent */
 
 const STATE = {
   IDLE: 'IDLE',
@@ -15,8 +15,8 @@ const IDLE_MIN = 3000;
 const IDLE_MAX = 9000;
 const REACT_DURATION = 2600;
 
-// Konuşma balonu kendi genişliğini istiyor; pencere sprite'tan dar olamaz.
-const BUBBLE_MIN_WIDTH = 200;
+// Balon ile karakterin başı arasında bırakılan en az boşluk (native px).
+const BUBBLE_GAP = 2;
 
 // Hit-test payı (CSS px). Karakter 40 piksel eninde ve kolu/bacağı birkaç piksel
 // kalınlığında — tam piksel isabeti istemek pet'i yakalamayı sinir bozucu yapardı.
@@ -26,13 +26,16 @@ const GRAB_TOLERANCE = 3;
 
 class Pet {
   /**
-   * @param {{ canvas: HTMLCanvasElement, bubbleEl: HTMLElement, api: typeof window.petAPI }} deps
+   * @param {{ canvas: HTMLCanvasElement, bubbleCanvas: HTMLCanvasElement,
+   *           api: typeof window.petAPI }} deps
    */
-  constructor({ canvas, bubbleEl, api }) {
+  constructor({ canvas, bubbleCanvas, api }) {
     this.canvas = canvas;
+    this.bubbleCanvas = bubbleCanvas;
     this.api = api;
     this.animator = new SpriteAnimator(canvas);
-    this.bubble = new SpeechBubble(bubbleEl);
+    this.pixelText = new PixelText();
+    this.bubble = new SpeechBubble(bubbleCanvas, this.pixelText);
 
     this.state = STATE.IDLE;
     this.direction = 'right';
@@ -45,7 +48,10 @@ class Pet {
     this.targetX = null;
     this.workArea = null;
     this.windowSize = { width: 200, height: 180 };
-    this.bubbleHeadroom = 92;
+    // Karakterin TÜM repliklerinin gerektirdiği en büyük balon kutusu (native px).
+    // Pencere payı buna göre ayrılıyor: her replikte pencereyi yeniden
+    // boyutlandırmak pet'i ekranda zıplatırdı.
+    this.bubbleBox = { genislik: 0, yukseklik: 0 };
 
     // Ölçek, meta.json'ın istediği değerin O EKRANDA güvenli olan en yakın
     // karşılığı (bkz. snapScale). Ekran değişince yeniden hesaplanıyor.
@@ -80,7 +86,11 @@ class Pet {
     this.x = config.window.x;
     this.y = config.window.y;
     this.workArea = config.workArea;
-    this.bubbleHeadroom = config.bubbleHeadroom ?? this.bubbleHeadroom;
+
+    // Balon ölçümü fonta bağlı; karakter yüklenmeden ÖNCE hazır olmalı, çünkü
+    // pencere yüksekliği balonun native kutusundan hesaplanıyor.
+    await this.pixelText.yukle();
+    await this.bubble.yukle();
 
     await this.applyCharacter(config.character);
 
@@ -134,6 +144,12 @@ class Pet {
       ...list.map((c) => Math.min(c.content.left, c.frameSize - c.content.right))
     );
     this.footGap = Math.min(...list.map((c) => c.frameSize - c.content.bottom));
+    // Kare kutusunun ÜSTÜNDEKİ boş pay: balon karakterin başına yaslansın diye.
+    // En az boşluklu klibi esas alıyoruz, yoksa balon başka bir kliple çakışır.
+    this.contentTop = Math.min(...list.map((c) => c.content.top));
+
+    // Replikler değiştiği için balon payı karakter başına yeniden ölçülüyor.
+    this.bubbleBox = this.bubble.enBuyukKutu(this.lines);
 
     await this.resizeWindowForCharacter();
     this.api.reportScale(this.scale);
@@ -152,9 +168,15 @@ class Pet {
     this.canvasSize = maxFrame * this.scale;
     const kutu = Math.ceil(this.canvasSize);
 
+    // Balon payı artık sabit değil: karakterin repliklerinden ölçülen native
+    // kutu, karakterle AYNI katsayıyla büyütülüyor. Sabit 92px'lik pay, ölçek
+    // 0.5'te gereksiz boşluk, ölçek 3'te taşan balon demekti.
+    const balonW = Math.ceil(this.bubbleBox.genislik * this.scale);
+    const balonH = Math.ceil(this.bubbleBox.yukseklik * this.scale);
+
     const bounds = await this.api.resize(
-      Math.max(BUBBLE_MIN_WIDTH, kutu),
-      kutu + this.bubbleHeadroom
+      Math.max(kutu, balonW),
+      kutu + balonH
     );
     if (!bounds) return;
 
@@ -196,6 +218,43 @@ class Pet {
     this.canvas.style.left = `${this.canvasLeft}px`;
     this.canvas.style.width = `${css}px`;
     this.canvas.style.height = `${css}px`;
+
+    this.layoutBubble();
+  }
+
+  /**
+   * Balon kanvasını karakterin başının üstüne, fiziksel piksel ızgarasına
+   * oturtur. Kanvas NATIVE çözünürlükte tutulup CSS ile büyütülüyor: ctx.scale
+   * ile büyütmek metni ve çerçeveyi yeniden örnekletirdi.
+   */
+  layoutBubble() {
+    const bw = Math.max(1, this.bubbleBox.genislik);
+    const bh = Math.max(1, this.bubbleBox.yukseklik);
+
+    // width/height'a yazmak kanvası temizleyip ctx durumunu sıfırlıyor;
+    // yalnızca gerçekten değiştiğinde dokunuyoruz.
+    if (this.bubbleCanvas.width !== bw || this.bubbleCanvas.height !== bh) {
+      this.bubbleCanvas.width = bw;
+      this.bubbleCanvas.height = bh;
+    }
+
+    const cssW = bw * this.scale;
+    const cssH = bh * this.scale;
+
+    const pencereDev = Math.round(this.windowSize.width * this.dpr);
+    const balonDev = Math.round(cssW * this.dpr);
+    const sol = Math.floor((pencereDev - balonDev) / 2) / this.dpr;
+
+    // Balonun altı karakterin başına yaslanıyor: kare kutusunun üstündeki boş
+    // payı (contentTop) düşmezsek balon başın epey yukarısında havada kalır.
+    const petUst = this.windowSize.height - this.canvasSize;
+    const alt = petUst + (this.contentTop - BUBBLE_GAP) * this.scale;
+    const ustDev = Math.max(0, Math.round((alt - cssH) * this.dpr));
+
+    this.bubbleCanvas.style.left = `${sol}px`;
+    this.bubbleCanvas.style.top = `${ustDev / this.dpr}px`;
+    this.bubbleCanvas.style.width = `${cssW}px`;
+    this.bubbleCanvas.style.height = `${cssH}px`;
   }
 
   /**
@@ -323,6 +382,8 @@ class Pet {
     this.update(dt);
     this.animator.update(dt);
     this.animator.draw();
+    this.bubble.update(dt);
+    this.bubble.ciz();
 
     requestAnimationFrame((t) => this.loop(t));
   }
@@ -482,7 +543,7 @@ class Pet {
 
   react() {
     const line = this.lines[Math.floor(Math.random() * this.lines.length)];
-    this.bubble.show(line, REACT_DURATION);
+    this.bubble.show(line, REACT_DURATION, this.direction === 'left' ? -1 : 1);
     // REACTING'e girmek için önce state'i sıfırla (art arda tıklamada süre yenilensin)
     this.state = STATE.IDLE;
     this.setState(STATE.REACTING);
@@ -576,8 +637,11 @@ function snapScale(requested, dpr) {
 window.addEventListener('DOMContentLoaded', () => {
   const pet = new Pet({
     canvas: document.getElementById('pet'),
-    bubbleEl: document.getElementById('bubble'),
+    bubbleCanvas: document.getElementById('bubble'),
     api: window.petAPI
   });
+  // Regresyon testleri balonu tetikleyebilsin diye (npm run check:bubble).
+  // Renderer kendi dünyasında; preload köprüsüne bir şey açmıyor.
+  window.__pet = pet;
   pet.init().catch((err) => console.error('Pet başlatılamadı:', err));
 });

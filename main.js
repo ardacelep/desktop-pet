@@ -5,10 +5,10 @@ const Store = require('electron-store');
 
 const CHARACTERS_DIR = path.join(__dirname, 'characters');
 
-// Sprite'ın üstünde konuşma balonuna ayrılan yer. Pencerenin geri kalanı
-// karakterin gerçek boyutundan hesaplanıyor (pet:resize), bunlar yalnızca ilk
-// kare için başlangıç değeri — renderer karakteri yükleyince pencereyi ölçüyor.
-const BUBBLE_HEADROOM = 92;
+// Yalnızca ilk kare için başlangıç değeri: renderer karakteri ve balonu
+// yükleyince pencereyi gerçek ölçülere göre yeniden boyutlandırıyor
+// (pet:resize). Balon payı artık burada sabit değil — repliklerin native
+// kutusundan ölçülüp karakterle aynı katsayıyla büyütülüyor.
 const WINDOW_WIDTH = 200;
 const WINDOW_HEIGHT = 180;
 
@@ -294,10 +294,11 @@ app.whenReady().then(() => {
   petWindow = createPetWindow();
   createTray();
 
-  // Tıklama geçirgenliği regresyon testi — npm run check:hittest
+  // Regresyon testleri — npm run check:hittest / npm run check:bubble
   if (process.env.PET_SELFTEST) {
+    const test = process.env.PET_SELFTEST === 'bubble' ? 'selftest-bubble' : 'selftest-hittest';
     petWindow.webContents.once('did-finish-load', () =>
-      require('./tools/selftest-hittest')(petWindow, () => currentInteractive, app));
+      require(`./tools/${test}`)(petWindow, () => currentInteractive, app));
   }
 
   app.on('activate', () => {
@@ -320,7 +321,6 @@ ipcMain.handle('pet:get-config', () => {
     character: resolveActiveCharacter(),
     window: { x, y, width, height },
     workArea: workAreaAt(x + width / 2, y + height / 2),
-    bubbleHeadroom: BUBBLE_HEADROOM,
     platform: process.platform
   };
 });

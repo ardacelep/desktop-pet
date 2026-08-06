@@ -4,18 +4,19 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'"
+      content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'"
     />
     <title>Desktop Pet</title>
     <link rel="stylesheet" href="pet.css" />
   </head>
   <body>
     <div id="stage">
-      <div id="bubble" class="bubble hidden" role="status"></div>
+      <canvas id="bubble" class="bubble" width="1" height="1"></canvas>
       <canvas id="pet" width="88" height="88"></canvas>
     </div>
 
     <script src="sprite-animator.js"></script>
+    <script src="pixel-text.js"></script>
     <script src="speech-bubble.js"></script>
     <script src="pet.js"></script>
   </body>

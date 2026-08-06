@@ -48,48 +48,16 @@ body {
 
 /* --------------------------- Konuşma balonu --------------------------- */
 
+/* Balon artık DOM kutusu değil, karakterle AYNI piksel ızgarasında çizilen bir
+   kanvas. CSS'e kalan tek iş konumlandırma: boyut da, ölçek de, animasyon da
+   pet.js'ten native piksel cinsinden geliyor.
+
+   Yarı saydamlık (opacity geçişi) bilerek yok: pixel art'ta ara alfa değerleri
+   nearest-neighbor büyütmede gri kenarlar üretiyor. Açılış/kapanış yerine
+   kutu boyutunu kare kare değiştiren bir "pop" kullanılıyor. */
 .bubble {
   position: absolute;
-  bottom: calc(100% - 8px);
-  left: 50%;
-  transform: translate(-50%, 6px);
-  max-width: 180px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #1c1c1e;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  font: 12px/1.35 -apple-system, "Segoe UI", system-ui, sans-serif;
-  text-align: center;
-  white-space: normal;
-  word-break: break-word;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 160ms ease, transform 160ms ease;
-}
-
-.bubble::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: rgba(255, 255, 255, 0.96);
-}
-
-.bubble.visible {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-.bubble.hidden {
-  visibility: hidden;
-}
-
-/* Balon konumu: pet'in üstünde durması için stage içinde sabitliyoruz */
-#stage > .bubble {
-  bottom: auto;
-  top: 8px;
 }
