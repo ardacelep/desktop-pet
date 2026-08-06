@@ -12,13 +12,11 @@
  * pikselleri ezer — tile, asset'i değiştirme özgürlüğünü koruyor.
  */
 
-/** 9-slice köşe boyutu (native px) — bubble.png 16x16 içinde 4px köşe. */
-const KOSE = 4;
+/** 9-slice köşe boyutu (native px) — bubble.png 32x12 içinde 5px köşe. */
+const KOSE = 5;
 /** Metin ile çerçeve arası iç boşluk (native px). */
 const IC_PAY_X = 5;
 const IC_PAY_Y = 4;
-/** Kuyruk yüksekliği (native px) — bubble_tail.png 8x6. */
-const KUYRUK_Y = 6;
 /** Balonun taşabileceği azami native genişlik. */
 const MAX_GENISLIK = 104;
 
@@ -56,6 +54,12 @@ class SpeechBubble {
     this.yon = 1;
     this.cerceve = null;
     this.kuyruk = null;
+    /**
+     * Kuyruğun balonun altına eklediği pay. Asset yüksekliğinden 1 eksik:
+     * kuyruğun en üst satırı gövdenin alt hattını KESİYOR (o satırda hat yerine
+     * dolgu var), yani hattın üstüne biniyor, altına eklenmiyor.
+     */
+    this.kuyrukPay = 0;
   }
 
   async yukle() {
@@ -63,6 +67,7 @@ class SpeechBubble {
       loadImage('ui/bubble.png'),
       loadImage('ui/bubble_tail.png')
     ]);
+    this.kuyrukPay = this.kuyruk.height - 1;
   }
 
   /**
@@ -74,7 +79,7 @@ class SpeechBubble {
     const m = this.metinMotoru.olc(metin, MAX_GENISLIK - 2 * IC_PAY_X);
     return {
       genislik: Math.max(2 * KOSE + 2, m.genislik + 2 * IC_PAY_X),
-      yukseklik: Math.max(2 * KOSE + 2, m.yukseklik + 2 * IC_PAY_Y) + KUYRUK_Y,
+      yukseklik: Math.max(2 * KOSE + 2, m.yukseklik + 2 * IC_PAY_Y) + this.kuyrukPay,
       satirlar: m.satirlar,
       metin: { genislik: m.genislik, yukseklik: m.yukseklik }
     };
@@ -150,7 +155,7 @@ class SpeechBubble {
     if (this.durum === DURUM.ACILIYOR) oran = ACILIS[Math.min(this.karesi, ACILIS.length - 1)];
     else if (this.durum === DURUM.KAPANIYOR) oran = KAPANIS[Math.min(this.karesi, KAPANIS.length - 1)];
 
-    const gövde = this.hedef.yukseklik - KUYRUK_Y;
+    const gövde = this.hedef.yukseklik - this.kuyrukPay;
     return {
       genislik: Math.max(2 * KOSE + 2, Math.round(this.hedef.genislik * oran)),
       gövde: Math.max(2 * KOSE + 2, Math.round(gövde * oran)),
@@ -173,7 +178,7 @@ class SpeechBubble {
     const k = this.suankiKutu();
     // Kutu alt-ortadan büyüyor: kuyruk pet'e sabit kalsın, balon ondan doğsun.
     const x = Math.round((this.canvas.width - k.genislik) / 2);
-    const gövdeAlt = this.canvas.height - KUYRUK_Y;
+    const gövdeAlt = this.canvas.height - this.kuyrukPay;
     const y = gövdeAlt - k.gövde;
 
     this.dokuzDilim(x, y, k.genislik, k.gövde);
@@ -181,13 +186,17 @@ class SpeechBubble {
     // Kuyruk yalnızca balon tam açıkken — yarı boyutta balonun altında yüzerdi
     if (k.tam) {
       const kx = Math.round(this.canvas.width / 2 - this.kuyruk.width / 2);
+      // 1px yukarı: kuyruğun üst satırı gövdenin alt hattının üstüne binip
+      // oradan ağzı açıyor. Hattın altına çizilseydi balon kapalı kalır,
+      // kuyruk ayrı bir parça gibi dururdu.
+      const ky = gövdeAlt - 1;
       c.save();
       if (this.yon < 0) {
-        c.translate(kx + this.kuyruk.width, gövdeAlt);
+        c.translate(kx + this.kuyruk.width, ky);
         c.scale(-1, 1);
         c.drawImage(this.kuyruk, 0, 0);
       } else {
-        c.drawImage(this.kuyruk, kx, gövdeAlt);
+        c.drawImage(this.kuyruk, kx, ky);
       }
       c.restore();
 
@@ -244,4 +253,3 @@ class SpeechBubble {
 }
 
 SpeechBubble.MAX_GENISLIK = MAX_GENISLIK;
-SpeechBubble.KUYRUK_Y = KUYRUK_Y;

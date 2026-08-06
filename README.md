@@ -44,7 +44,7 @@ pet/
 │   ├── pixel-text.js       # Pixel font metin motoru (satır sarma + alfa eşikleme)
 │   ├── speech-bubble.js    # Piksel konuşma balonu: 9-slice çerçeve, kuyruk, pop
 │   ├── fonts/              # PixelifySans.ttf + OFL.txt (lisans)
-│   ├── ui/                 # bubble.png, bubble_tail.png (native çözünürlük)
+│   ├── ui/                 # bubble.png, bubble_tail.png (native çözünürlük, CC0)
 │   └── pet.js              # Durum makinesi, davranış, etkileşimler
 ├── characters/
 │   ├── characters.json     # Sadece varsayılan karakter (nadiren değişir)

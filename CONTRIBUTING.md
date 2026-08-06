@@ -68,21 +68,28 @@ küçültmeyin.
 
 | Dosya | Boyut | Yapı |
 | --- | --- | --- |
-| `bubble.png` | 16×16 | 9-slice: köşe 4×4, kenar dilimi 8px |
-| `bubble_tail.png` | 8×6 | aşağı bakan kuyruk; sağa bakan çizilir, kodda flip edilir |
+| `bubble.png` | 32×12 | 9-slice: köşe 5×5, kenar dilimi 22×2 |
+| `bubble_tail.png` | 4×5 | aşağı bakan kuyruk; sağa bakan çizilir, kodda flip edilir |
 
 Balon her metin uzunluğuna esnediği için sabit bir resim değil, 9-slice: köşeler
 1:1 kalır, **kenarlar ve orta tile edilir** (esnetilmez). Bu yüzden tek kritik
 kural şu: kenar dilimleri kendi kendine tekrarlandığında dikiş görünmemeli. En
 güvenlisi kenarları düz tutup (1px hat + dolgu) süslemeyi köşelere koymak.
 
+Kuyruğun **en üst satırı gövdenin alt hattını keser**: o satırda hat yerine dolgu
+rengi vardır ve kod kuyruğu 1px yukarı, hattın üstüne çizer. Balonun ağzı böyle
+açılıyor. Bu yüzden kuyruğun ekranda kapladığı yükseklik asset yüksekliğinden 1
+eksik (`kuyrukPay`) ve gövdenin alt kenarında delik **olmamalı** — olsaydı tile
+edilirken tekrarlanırdı.
+
 Açılış animasyonu için sprite sheet çizmeyin — her metin uzunluğu ayrı sheet
 gerektirirdi. "Pop" efekti kutu boyutunu kare kare değiştirerek kodda üretiliyor
 (`speech-bubble.js`, `ACILIS` dizisi).
 
-Depodakiler geçici placeholder; üzerine kendi çiziminizi koyabilirsiniz.
-`npm run check:bubble` balonu ölçüp `$TMPDIR/pet-balon*.png` altına ekran
-görüntüsü bırakır.
+Boyutları değiştirebilirsiniz: kuyruk yüksekliği asset'ten okunuyor, ama köşe
+boyutu `KOSE` sabitinde duruyor — daha kalın köşeli bir balon çizerseniz onu da
+güncelleyin. `npm run check:bubble` balonu ölçüp `$TMPDIR/pet-balon*.png` altına
+ekran görüntüsü bırakır.
 
 ### Metin ve font
 
