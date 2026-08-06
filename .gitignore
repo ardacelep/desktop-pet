@@ -23,6 +23,7 @@ venv/
 
 # Test klasörleri
 tools/test/
+assets/test
 
 # İşletim sistemi
 .DS_Store
