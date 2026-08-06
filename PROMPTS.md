@@ -13,15 +13,18 @@ Araçların ne yaptığı: [README](README.md#ai-ile-üretilen-spriteları-hazı
 | Kareler arasında **tamamen boş şerit** olmalı | `split_sheet` kareleri boş satır/sütundan ayırıyor | ✗ |
 | **Çerçeve, kare numarası, etiket, yer gölgesi yok** | Hepsi opak piksel; kareye yapışır ya da bölmeyi bozar | ✗ |
 | Dama rengi karakterde **hiç bulunmayan** bir renk olmalı | Ölçüldü: gri damada saf beyaz karakter pikselleri yeniyor, magenta damada yenmiyor | kısmen |
+| Blok kenarları **keskin** olmalı, yeniden sıkıştırma olmamalı | Yeterince bozulmuş bir render'da ızgara hiç bulunamıyor ve `pixelart_extract` hata verip duruyor | ✗ |
+| **Parıltı (✦), filigran, imza yok** | Ölçüldü: köşeye konan parıltı 73 piksel, leke eşiğinin çok üstünde — sprite'a karışıyor | kısmen |
 | Karakterin canvas'ta ortalı olması | `pack_sheet` zaten içerikten hizalıyor | ✓ |
 | Kareler arası aynı taban çizgisi | `pack_sheet` ayak çizgisine hizalıyor | ✓ |
 | Kenar boşluğu miktarı | Kırpma hallediyor | ✓ |
+| Beyaz/krem kıyafet yasağı | Magenta damayla ölçülen kayıp sıfır — kısıt artık gereksiz | ✓ |
 
-Yani prompt'ta yer alması gereken şey, üstteki beş satır. Alttaki üçü eskiden zorunluydu, artık değil — REHBER.md'deki "%85 doldurmalı" gibi maddeleri prompt'a koymak sadece Gemini'nin dikkatini dağıtır.
+Yani prompt'ta yer alması gereken şey, üstteki yedi satır. Alttaki dördü eskiden zorunluydu, artık değil; "canvas'ın %85'ini doldurmalı" ya da "beyaz ayakkabı kullanma" gibi maddeleri prompt'a koymak sadece Gemini'nin dikkatini dağıtır.
 
 ## Dama rengi: gri değil, magenta
 
-REHBER.md **açık tonlu** dama istiyordu; o, eski script nötr gri beklediği için doğruydu. Yeni script dama rengini kenardan ölçerek buluyor, dolayısıyla artık tersi geçerli: dama, karakterin paletinde **asla bulunmayacak** bir renk olmalı.
+Eski rehber **açık tonlu** dama istiyordu (`#FFFFFF` / `#E0E0E0`); o, eski script nötr gri beklediği için doğruydu. `pixelart_extract` dama rengini kenardan ölçerek buluyor, dolayısıyla artık tersi geçerli: dama, karakterin paletinde **asla bulunmayacak** bir renk olmalı.
 
 Ölçüm (saf beyaz içeren bir karakterle):
 
@@ -33,15 +36,116 @@ REHBER.md **açık tonlu** dama istiyordu; o, eski script nötr gri beklediği i
 
 Yan fayda: `--fill-gaps` güvenli hale geliyor. Gri damada göz akı (254-255) damanın açık tonundan (253) ayırt edilemiyor ve boşluklarla birlikte siliniyor; magenta damada göz akı damaya 300 birim uzak, yani hiçbir zaman aday olmuyor.
 
-## Düzen: 2×2 ızgara
+İkinci fayda tolerans payında. Ölçülen bir magenta render'da dama tonları `(184,0,184)` ve `(254,1,252)`, dama karelerinin sınırındaki karışım pikselleri ise `(210,0,211)` — tonlara 27 birim uzak. Magenta damada 36 birimlik tolerans rahatça güvenliyken gri damada 4 bile riskli, çünkü güvenli tolerans tamamen damanın karakter paletine uzaklığına bağlı.
 
-Gemini kare canvas'ta daha tutarlı çalışıyor (REHBER.md, 1.1). `split_sheet.py` R×C ızgarayı zaten destekliyor, o yüzden 4 kareyi tek sıra yerine 2×2 dizmek hem Gemini için kolay hem bizim için sorunsuz.
+## Render keskinliği: kurtarılamayan tek kusur
 
-**Bunun bedeli çözünürlük.** Tek kare üretiminde 2048'lik canvas'tan ~95 piksel boyunda karakter çıkıyor; 2×2 ızgarada her kareye 1024 düşüyor, yani yaklaşık yarısı. Karşılığında kareler **birbiriyle tutarlı** oluyor — REHBER.md 4.1'de tek tek üretimin en büyük sorunu buydu. Detay mı tutarlılık mı sorusunun cevabı karaktere göre değişir; ikisini de deneyip `pixelart_extract`'in bildirdiği native çözünürlüğe bakın.
+Prompt'taki en kolay gözden kaçan teknik madde bu. Diğer kusurların çoğunu araçlar telafi ediyor; yeniden sıkıştırılmış bir render'ı hiçbir şey telafi etmiyor.
+
+`pixelart_extract` önce "bu görsel zaten native mi, yoksa büyütülmüş mü?" diye soruyor. Ölçüt, komşu satır/sütun farklarının biçimi: büyütülmüş pixel art'ta dağılım iki tepeli (blok içi farklar küçük, blok sınırları büyük), native görselde tek tepeli. 53 gerçek dosyada ölçülen aralıklar — büyütülmüş pixel art 0.14–0.29, **ağır yeniden kodlanmış sheet'ler 0.56–0.59**, native pixel art 0.77–1.24, illüstrasyon/fotoğraf 0.86–0.99. Eşik 0.70.
+
+Yani yeniden kodlama görseli tam da karar sınırına doğru itiyor: blok içi gürültü arttıkça görsel giderek "native" gibi görünüyor.
+
+Ölçülen gerçek örnek, 5632×704'lük bir yürüyüş sheet'i (171 700 ayrı renk): oran `(0.520, 0.558)`. Sınıflandırma doğru — büyütülmüş sayılıyor — ama bir sonraki adım tutmuyor:
+
+```
+HATA: X ekseninde izgara bulunamadi (en iyi oran 1.40, esik 3.0)
+      — gorsel buyutulmus pixel art olmayabilir ya da render cok bozuk olabilir.
+```
+
+Bu iyi haber: araç sessizce bozuk çıktı vermek yerine duruyor. Ama dosya yine de kurtarılamıyor — tek çare yeniden ürettirmek.
+
+Pratikte: **çıktı PNG olarak alınmalı**, JPEG'e çevrilmemeli, "enhance"/upscale filtresinden geçirilmemeli, ekran görüntüsüyle yeniden kaydedilmemeli. Blok kenarlarında ara ton olmamalı.
+
+Kontrol etmenin en hızlı yolu, `pixelart_extract`'in bildirdiği native çözünürlük: 2048'lik bir canvas'tan 100×100 civarı bekliyorsanız ve araç size girdiyle aynı ölçüyü söylüyorsa ya da ızgarayı hiç bulamıyorsa, render bozuktur.
+
+## Düzen: ızgara, tek sıra değil
+
+**Kareleri tek sırada yan yana istemeyin.** 8 kare tek sırada = 8:1 en-boy oranı; bu kadar uzun bir görsel elinize gelene kadar yeniden ölçeklenip sıkıştırılıyor ve piksel ızgarası bunu kaldırmıyor. Ölçülen gerçek bir örnek: 5632×704'lük bir yürüyüş sheet'i **171 700 ayrı renkle** geldi (temiz bir render'da birkaç yüz renk olur) ve ızgara tespiti tamamen başarısız oldu — `pixelart_extract` "X ekseninde izgara bulunamadi" deyip durdu. Dosya kurtarılamadı, yeniden ürettirmek gerekti.
+
+Çare, aynı kareleri ızgaraya dizmek — canvas kareye yakın kalıyor:
+
+| Kare sayısı | İstenecek düzen | Canvas |
+| --- | --- | --- |
+| 4 | 2 satır × 2 sütun | kare |
+| 6 | 2 satır × 3 sütun | kareye yakın |
+| 8 | 2 satır × 4 sütun | 2:1 |
+| 9 | 3 satır × 3 sütun | kare |
+
+Gemini kare canvas'ta daha tutarlı çalışıyor; dikey/portre canvas istendiğinde karakteri sıkıştırıp ölçeği kareler arasında oynatıyor. `split_sheet.py` R×C ızgarayı zaten destekliyor (ölçüldü: 2×4 ızgara, 8 kare, okuma sırası korunuyor), o yüzden ızgara istemenin bizim tarafta hiçbir maliyeti yok.
+
+Motorun beklediği **yatay şerit** endişe konusu değil: onu `pack_sheet` üretiyor ve o dosya küçük olduğu için (ör. 256×32) sıkıştırma sorunu yaşamıyor. Izgara yalnızca Gemini'den ALIRKEN gerekli.
+
+**Bunun bedeli çözünürlük.** Tek kare üretiminde 2048'lik canvas'tan ~95 piksel boyunda karakter çıkıyor; 2×2 ızgarada her kareye 1024 düşüyor, yani yaklaşık yarısı. Karşılığında kareler **birbiriyle tutarlı** oluyor — kareleri tek tek ürettirmenin en büyük sorunu buydu: her üretim karakteri biraz farklı ölçekte çiziyor ve ölçek farkını araç düzeltemiyor. Detay mı tutarlılık mı sorusunun cevabı karaktere göre değişir; ikisini de deneyip `pixelart_extract`'in bildirdiği native çözünürlüğe bakın.
 
 ---
 
-## Walk cycle spritesheet (4 kare, 2×2)
+## 1. Temel karakter (buradan başlayın)
+
+Her şeyin referansı bu görsel: walk ve idle sheet'leri buna bakarak üretiliyor, dolayısıyla buradaki bir hata sonraki her adıma taşınıyor. Fotoğraftan üretiyorsanız **8-10 fotoğrafı birlikte** verin — tek fotoğrafla üretilen karakterin kimliği (saç, gözlük, kıyafet tercihi) kareler arasında oynuyor.
+
+```
+Sana bu kişinin 8-10 farklı fotoğrafını veriyorum. Bunları tek tek değil, BİRLİKTE
+analiz ederek tutarlı bir karakteristik profil çıkar, sonra bu profile göre tam
+vücut bir pixel art karakter üret.
+
+ADIM 1 — ANALİZ
+Tüm fotoğrafları karşılaştırarak, farklı açı/ışık/ifadelerde bile DEĞİŞMEYEN,
+kişiyi tanımlayan özellikleri belirle:
+- Saç rengi, uzunluğu ve modeli
+- Yüz yapısı: gözlük var mı, sakal/bıyık modeli
+- Genel vücut yapısı (uzun/kısa, ince/dolgun)
+- Fotoğraflarda tekrar eden kıyafet tarzı veya renk tercihi
+- Sabit aksesuarlar (gözlük modeli, küpe, saat, yaka kartı)
+Çelişen detaylarda en sık tekrar edeni ya da en ayırt edici olanı seç.
+
+ADIM 2 — KARAKTER
+- Poz: tam vücut, ÖNDEN görünüm, ayakta, nötr duruş. Kollar gövdenin yanında.
+- Stil: chunky/blocky 16-bit oyun karakteri estetiği, basitleştirilmiş detaylar.
+- Orantı: chibi, 2-3 baş boyu (büyük kafa, küçük gövde).
+- Palet: 16-24 renk, net koyu kontur.
+- Fotoğraftaki en belirgin 2-3 özelliği abartarak/stilize ederek yansıt.
+- İki ayak da AYNI yatay çizgiye otursun.
+
+ARKA PLAN — DAMA DESENİ
+- Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri TAM OLARAK
+  #FF00FF ve #C000C0 olsun.
+- Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
+- Dama tüm görsel boyunca AYNI iki renkte kalsın: gradyan, gölge, vinyet, ışık
+  kayması ya da renk kayması EKLEME.
+- Dama karesinin kenarı, karakterin piksel bloğunun tam katı olsun (örneğin bir
+  dama karesi = 2 piksel bloğu) ve dama karakterle AYNI ızgaraya hizalansın.
+
+RENDER KESKİNLİĞİ — EN KRİTİK TEKNİK MADDE
+- Gerçek pixel art: her piksel bloğu TEK bir düz renk, kenarları keskin.
+- Anti-aliasing, yumuşak geçiş, gradyan, bulanıklık, yumuşak gölge ya da yarı
+  saydam piksel YOK. Blok kenarlarında ara ton olmayacak.
+- Tüm görsel TEK bir piksel ızgarasında çizilsin; blok boyutu her yerde aynı.
+- Çıktı PNG olsun. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale ya da
+  keskinleştirme filtresi uygulama.
+
+GÖRSELDE BULUNMAYACAKLAR
+- Parıltı/yıldız işareti (✦, ✨), imza, filigran, logo — köşeye bile koyma.
+- Yer gölgesi, zemin çizgisi, platform, yansıma.
+- Çerçeve, kenarlık, başlık, etiket, yazı, renk paleti şeridi.
+- Karakterden KOPUK hiçbir parça olmasın; silüet tek parça olsun.
+
+- Kolla gövde arasında 1-2 piksellik minik boşluklar bırakma: kol ya gövdeye
+  değsin ya da arada en az 4 piksellik net bir açıklık olsun.
+
+Canvas kare (1:1) ve olabilecek en yüksek çözünürlükte olsun.
+Çıktıyı PNG olarak ver.
+```
+
+Bu prompt'ta **kasıtlı olarak bulunmayan** iki eski madde var. "Karakter canvas'ın en az %85'ini doldursun" gereksiz: `pixelart_extract` kenar boşluğunu kırpıyor, `pack_sheet` de hizalıyor. "Beyaz/krem kıyafet kullanma" da gereksiz: o kısıt gri damanın beyaz pikselleri yemesi yüzünden vardı, magenta damayla ölçülen kayıp sıfır. İkisini de prompt'a geri koymak Gemini'nin dikkatini gerçekten kritik olan maddelerden dağıtıyor.
+
+Karakteri işleyip `characters/` altına koymak için: [README](README.md#yeni-karakter-ekleme).
+
+---
+
+## 2. Walk cycle spritesheet — sıfırdan (4 kare, 2×2)
+
+Gemini'nin yürüyüş döngüsünü sıfırdan tutturması zor; bu prompt bir deneme değeri taşıyor ama sonuç tatmin etmezse [3. bölümdeki](#3-hazır-sheet-üzerinde-karakter-değiştirme-walk-için-önerilen-yol) poz-referanslı yöntem belirgin şekilde daha güvenilir.
 
 ```
 Ekteki pixel art karakteri referans alarak, YÜRÜME animasyonunun 4 karesini TEK bir
@@ -57,6 +161,7 @@ YERLEŞİM
 - Çerçeve, ayırıcı çizgi, kare numarası, etiket, başlık ya da yazı EKLEME.
 - Karakterin altına yer gölgesi ya da zemin çizgisi ÇİZME. Karakter dışında hiçbir
   şey olmayacak.
+- Parıltı/yıldız işareti (✦, ✨), imza, filigran ya da logo EKLEME — köşeye bile.
 
 ARKA PLAN
 - Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri tam olarak
@@ -94,8 +199,10 @@ Uzak taraftaki kol ve bacağı biraz daha koyu tonda çiz ki hangi uzvun önde
 olduğu anlaşılsın.
 
 ÇİZİM KURALLARI
-- Gerçek pixel art: her piksel bloğu tek düz renk. Yumuşak geçiş, anti-aliasing,
-  gradyan, bulanıklık ya da yarı saydam piksel YOK.
+- Gerçek pixel art: her piksel bloğu tek düz renk, kenarları keskin. Yumuşak
+  geçiş, anti-aliasing, gradyan, bulanıklık ya da yarı saydam piksel YOK.
+- Çıktı PNG olsun. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale ya da
+  keskinleştirme filtresi uygulama.
 - Sınırlı palet (16-24 renk), net koyu kontur.
 - Karakterin tasarımı (saç, gözlük, sakal, kıyafet, aksesuarlar, renkler)
   referanstakiyle birebir aynı kalmalı.
@@ -105,7 +212,80 @@ olduğu anlaşılsın.
 Çıktıyı yüksek çözünürlüklü PNG olarak ver.
 ```
 
-## Idle spritesheet (4 kare, 2×2)
+## 3. Hazır sheet üzerinde karakter değiştirme (walk için önerilen yol)
+
+Yukarıdaki "sıfırdan walk cycle" prompt'u Gemini'de güvenilir sonuç vermiyor: model yürüyüş döngüsünün ayna-simetrik pozlarını tutturamıyor, çoğu denemede aynı pozu tekrarlıyor. Daha iyi çalışan yol, **pozu üretmeyi modelden almak**: animasyonu doğru olan hazır bir sprite sheet'i poz referansı olarak verip yalnızca karakteri değiştirtmek.
+
+Bu yöntemin iki şartı var. Birincisi, referans sheet'in kare sayısı ve düzeni sizin istediğinizle aynı olmalı. İkincisi — ve asıl tökezleten yer — **çıktıyı ızgara olarak istemek**: referans sheet'ler genelde tek sırada gelir, Gemini de aynı düzeni taklit eder ve elinize kullanılamayacak kadar geniş bir görsel gelir.
+
+```
+Sana İKİ referans veriyorum:
+  (A) POZ REFERANSI — animasyonu doğru olan hazır bir sprite sheet.
+  (B) KARAKTER REFERANSI — kullanmanı istediğim karakter.
+
+GÖREV
+(A)'daki her karenin POZUNU birebir koru, ama karakteri (B)'deki karakterle
+DEĞİŞTİR. Yani iskelet/hareket (A)'dan, görünüm (B)'den gelecek.
+
+- (A)'daki uzuv açıları, gövde eğimi, ayakların yere göre konumu, hangi karede
+  hangi bacağın önde olduğu — hepsi aynı kalacak.
+- (B)'deki saç, yüz, gözlük, sakal, kıyafet, aksesuarlar, renk paleti — hepsi
+  birebir taşınacak.
+- (A)'daki karakterin kıyafetinden, saç renginden, vücut oranından HİÇBİR ŞEY
+  sızmayacak. (A) yalnızca poz kaynağı.
+- Kare sayısı (A) ile AYNI olacak; kare ekleme, çıkarma, sıra değiştirme.
+
+DÜZEN — DİKKAT, REFERANSTAN FARKLI
+(A)'da kareler tek sırada olsa bile, SEN çıktıyı IZGARA olarak diz:
+- [2] satır x [4] sütun.
+- Sıra korunacak: (A)'nın 1. karesi senin SOL ÜST karen. Sonra soldan sağa
+  ilerle; satır bitince alt satırın en soluna geç.
+- Kareler arasında ve ızgaranın dışında, KARAKTERE AİT HİÇBİR PİKSEL OLMAYAN,
+  tamamen arka plan olan boş şeritler bırak. Şerit genişliği bir karenin en az
+  onda biri kadar olsun.
+- Canvas kareye yakın olsun. Tek sırada UZUN bir görsel ÜRETME.
+- Çerçeve, ayırıcı çizgi, kare numarası, etiket ya da yazı EKLEME.
+
+ÖLÇEK — EN KRİTİK MADDE
+- Karakterin ölçeği bütün karelerde BİREBİR aynı olmalı: kafa yüksekliği, gövde
+  genişliği, bacak uzunluğu — hepsi aynı sayıda piksel.
+- Değişen tek şey uzuvların POZİSYONU. Kareler arasında büyütme, küçültme,
+  yakınlaştırma yok.
+- Tüm sheet aynı piksel ızgarasında çizilsin; bir karedeki piksel bloğu ile
+  diğerindeki aynı boyutta olmalı.
+- Karakter SAĞA baksın (sola yürüyüş bizde aynadan üretiliyor).
+
+ARKA PLAN
+- Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri TAM
+  OLARAK #FF00FF ve #C000C0 olsun. (A)'nın arka planı ne olursa olsun.
+- Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
+- Dama tüm görsel boyunca AYNI iki renkte kalsın; gradyan, gölge, vinyet ya da
+  renk kayması EKLEME.
+- Dama karesinin kenarı, karakterin piksel bloğunun tam katı olsun.
+
+ÇİZİM KURALLARI
+- Gerçek pixel art: her piksel bloğu TEK düz renk, kenarları keskin.
+- Anti-aliasing, yumuşak geçiş, gradyan, bulanıklık ya da yarı saydam piksel YOK.
+- Sınırlı palet (16-24 renk), net koyu kontur.
+- Uzak taraftaki kol ve bacağı biraz daha koyu tonda çiz ki hangi uzvun önde
+  olduğu anlaşılsın.
+- Kolla gövde arasında 1-2 piksellik minik boşluklar bırakma: kol ya gövdeye
+  değsin ya da arada en az 4 piksellik net açıklık olsun.
+- Yer gölgesi, zemin çizgisi ÇİZME. Parıltı (✦, ✨), imza, filigran EKLEME.
+
+Çıktıyı PNG olarak ver. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale
+filtresi uygulama.
+```
+
+`[2] satır x [4] sütun` kısmını kare sayınıza göre doldurun — tablo [Düzen](#düzen-ızgara-tek-sıra-değil) bölümünde.
+
+Gemini kareleri birbirine yapışık dizerse aralarında boş şerit kalmaz ve otomatik bölme çalışmaz. Bu durumda ızgara ölçüsünü elle verin; menüde 3. adımda "Kareler arasında boşluk var mı?" sorusuna hayır deyin, ya da doğrudan:
+
+```bash
+python3 tools/split_sheet.py sheet_native.png -o kareler/ --rows 2 --cols 4 --preview bolme.png
+```
+
+## 4. Idle spritesheet (4 kare, 2×2)
 
 Walk prompt'unun aynısı; yalnızca POZLAR bölümünü değiştirin:
 
@@ -125,24 +305,32 @@ hepsi dört karede de TEK PİKSEL bile oynamayacak. Karakteri bütün olarak
 büyütüp küçültme; sadece göğüs/omuz hattı kayacak.
 ```
 
-REHBER.md 4.2'deki tuzak burada da geçerli: "nefes alma" belirsiz tarif edilirse Gemini tüm karakteri ölçekliyor. Piksel cinsinden kesin talimat şart.
+Tuzak şu: "nefes alma" belirsiz tarif edilirse Gemini nefes hissi yerine tüm karakteri büyütüp küçültüyor. Piksel cinsinden kesin talimat şart — hangi hattın kaç piksel kayacağı yazılmalı.
 
-## Üretim sonrası kontrol listesi
+## 5. Üretim sonrası kontrol listesi
 
 Pipeline'a sokmadan önce görsele bakıp şunları doğrulayın:
 
-1. **Kareler arasında gerçekten boş şerit var mı?** Yoksa `split_sheet --rows 2 --cols 2` ile eşit bölmek gerekir.
-2. **Karakter dört karede de aynı boyda mı?** Değilse `split_sheet` uyarı verir; düzeltmek için yeniden ürettirmek gerekir, araç ölçekleyemez.
-3. **Yer gölgesi, çerçeve, numara var mı?** Varsa yeniden ürettirin — bunlar opak piksel olarak sprite'a karışır.
-4. **Dama gerçekten magenta mı?** Gemini bazen istenen rengi görmezden gelip griye dönüyor. Gri geldiyse çalışır ama beyaz detaylar risk altındadır.
+1. **Görsel ızgara mı, tek uzun sıra mı?** Tek sıra geldiyse yeniden ürettirin — en-boy oranı büyüdükçe görsel yeniden sıkıştırılıp geliyor ve piksel ızgarası bozuluyor (bkz. [Düzen](#düzen-ızgara-tek-sıra-değil)).
+2. **Görsele yakınlaşınca blok kenarları keskin mi?** Bulanıksa yeniden ürettirin; bu, araçların düzeltemediği tek kusur (bkz. [Render keskinliği](#render-keskinliği-kurtarılamayan-tek-kusur)).
+3. **Kareler arasında gerçekten boş şerit var mı?** Yoksa ızgara ölçüsünü elle verin: `split_sheet --rows 2 --cols 4`.
+4. **Kare sayısı ve sırası doğru mu?** Karakter değiştirme yönteminde Gemini bazen kare atlıyor ya da sırayı bozuyor. Izgarada okuma sırası soldan sağa, sonra alt satır.
+5. **Karakter bütün karelerde aynı boyda mı?** Değilse `split_sheet` uyarı verir; düzeltmek için yeniden ürettirmek gerekir, araç ölçekleyemez.
+6. **Yer gölgesi, çerçeve, numara, köşede parıltı var mı?** Varsa yeniden ürettirin — hepsi opak piksel olarak sprite'a karışır.
+7. **Dama gerçekten magenta mı?** Gemini bazen istenen rengi görmezden gelip griye dönüyor. Gri geldiyse çalışır ama beyaz detaylar risk altındadır.
+8. **Karakter değiştirme yaptıysanız:** poz referansındaki karakterin kıyafeti/saç rengi sızmış mı? Gemini iki referansı bazen karıştırıyor.
 
-Sonra:
+Sonra araçları çalıştırın — menüden (`npm run tools` → 1) ya da elle:
 
 ```bash
 python3 tools/pixelart_extract.py sheet_ham.png sheet_native.png --verbose --verify
 ```
 
-`--verify` çıktısındaki "gercek detay kaybi" satırı 0'a yakın olmalı. Native çözünürlük beklediğinizden çok küçükse (ör. kare başına 40 pikselden az) Gemini'yi daha büyük canvas'a zorlayın ya da kareleri tek tek ürettirin.
+Çıktıda **önce native çözünürlüğe bakın**: 2048'lik bir canvas'tan 100×100 civarı beklenir. Araç size girdiyle aynı ölçüyü söylüyorsa ("Gorsel zaten native cozunurlukte gorunuyor") indirgeme hiç yapılmamıştır — görsel fazla gürültülüdür, sonuç kullanılamaz.
+
+Sonra `--verify` çıktısındaki `3) Detay kaybi` satırı: çakışan hücre sayısı 0'a yakın olmalı. `4) Kaynak gurultusu` satırındaki palet, temiz bir render'da birkaç yüz renk mertebesinde kalır; on binlere çıkıyorsa kaynak yeniden sıkıştırılmış demektir.
+
+Native çözünürlük beklediğinizden çok küçükse (ör. kare başına 40 pikselden az) Gemini'yi daha büyük canvas'a zorlayın ya da kareleri tek tek ürettirin.
 
 ```bash
 python3 tools/split_sheet.py sheet_native.png -o kareler/ --frames 4 --preview bolme.png
@@ -154,11 +342,4 @@ python3 tools/pack_sheet.py kareler/kare_*.png -o walk_right_spritesheet.png --g
 
 `on.gif`'i açın. Titreme varsa `pack_sheet` çıktısındaki örtüşme yüzdelerine bakın: düşük olan kare ya farklı ölçekte üretilmiş ya da pozu diğerlerinden çok farklı.
 
-## Temel karakter prompt'u
-
-Tek bir karakteri sıfırdan üretmek için REHBER.md 1.2'deki prompt hâlâ geçerli, iki değişiklikle:
-
-- **Dama rengini değiştirin:** "açık tonlu (#FFFFFF ve #E0E0E0)" yerine "#FF00FF ve #C000C0 magenta".
-- **Beyaz kıyafet yasağını kaldırabilirsiniz.** O kısıt, gri damanın beyaz kıyafeti yemesi yüzünden vardı; magenta damayla ölçülen kayıp sıfır.
-
-Kare canvas ve "%85 doldur" maddeleri zararsız ama artık gerekli değil — kırpma ve hizalama bunu hallediyor.
+Sheet'i `characters/` altına yerleştirip `meta.json` yazmak için: [README](README.md#yeni-karakter-ekleme). Doğrulamak için `npm run check`.
