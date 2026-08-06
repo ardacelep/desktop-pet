@@ -2,10 +2,9 @@
   "displayName": "Mag",
   "nativeFrameSize": 87,
   "displayScale": 1,
-
   "idle": {
     "file": "idle_spritesheet.png",
-    "frameSize": 86,
+    "frameSize": 87,
     "frameCount": 4,
     "frameDuration": 500
   },
@@ -22,10 +21,9 @@
     "frameDuration": 120,
     "flip": true
   },
-
   "walkSpeed": 42,
   "lines": [
-    "Selam! 👋",
+    "Selam!",
     "Bugün nasılsın?",
     "Bir mola versene.",
     "Su içmeyi unutma.",
