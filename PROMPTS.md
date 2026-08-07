@@ -474,7 +474,9 @@ Bu adım [3. bölümü](#3-hazır-sheet-üzerinde-karakter-değiştirme-walk-iç
 
 Elimizde ölçülmüş kötü bir geçmiş var: Gemini'ye metinle poz tarif etmek üç turda da başarısız oldu, iki sheet arasındaki alfa IoU %100 çıktı — yani model hiçbir şey değiştirmeden referansı aynen geri verdi (bkz. `tools/rig_pose.py`). Başarısızlık biçimi hep aynı: **model çelişki görünce referansa sadakati seçiyor.**
 
-O yüzden burada "sağa çevir" demek yetmiyor. Prompt, "sağa bakıyor"un **gözle sayılabilir işaretlerini** listeliyor — tek göz, dışarı çıkan burun, üst üste binen omuzlar. Model bunları tek tek üretmek zorunda kalınca "hiçbir şey değiştirmeme" seçeneği kapanıyor.
+O yüzden burada "sağa çevir" demek yetmiyor. Prompt, "sağa bakıyor"un **gözle sayılabilir işaretlerini** listeliyor — tek göz, tek kulak, üst üste binen omuzlar. Model bunları tek tek üretmek zorunda kalınca "hiçbir şey değiştirmeme" seçeneği kapanıyor.
+
+Yalnız bu listeyi uzatmanın bir bedeli var; burun maddesinin neden çıkarıldığı [aşağıda](#burun-maddesini-promptta-koymayin).
 
 ### Ölçülen kabul ölçütü: siluet ne kadar daralmalı
 
@@ -488,9 +490,11 @@ Beş karakterimizin önden ve yandan karelerinden ölçüldü:
 | omerhan | 36×85 | 31×90 | 0.86 | 1.06 |
 | faküs | 37×91 | 38×91 | **1.03** | 1.00 |
 
-Dördünde genişlik **0.70-0.86**'ya düşüyor, yükseklik değişmiyor. Yani gelen dosyada genişlik oranı 1'e yakınsa model muhtemelen döndürmemiştir — ölçüp geri göndermek gerekir.
+Dördünde genişlik **0.70-0.86**'ya düşüyor, yükseklik değişmiyor.
 
-faküs istisna, ve nedeni öğretici: onun "yandan" karesi gerçek bir profil değil, dörtte üç görünüş. Kabul edilebilir bir sonuç ama ölçüt olarak alınmamalı.
+**Ama bu oranı sert bir kapı olarak kullanmayın.** Üstteki dört karakter ince yapılı; dolgun bir karakterde profil derinliği önden genişliğe yaklaşıyor. Ölçüldü: göbekli bir karakterin iki ayrı üretiminde oranlar 0.906 ve 1.000 çıktı, oysa ikisi de gözle bakıldığında kusursuz profildi — tek göz, tek kulak, burun dışarıda. faküs'ün 1.03'ü de aynı sinyalin erken hâliydi (onun "yandan" karesi zaten gerçek profil değil, dörtte üç görünüş).
+
+Yani genişlik oranı bir **tarama** sinyali: 1'in belirgin üstündeyse şüphelen, ama 1'e yakın olması tek başına ret sebebi değil. Gerçekten dönüp dönmediğinin güvenilir ölçütü **yüz**: tek göz mü görünüyor, kulak tek başına mı, burun siluetin dışına çıkmış mı.
 
 ### Tek kare değil, iki kare birlikte isteyin
 
@@ -509,6 +513,22 @@ Bu kurtarılamaz bir kusur: `meta.json` karakter başına tek `nativeFrameSize` 
 Sebep [Düzen bölümünde](#düzen-ızgara-tek-sıra-değil) zaten yazılı olan şey: her üretim karakteri biraz farklı ölçekte çiziyor. Çare de aynı — **iki görünüşü tek görselde istemek.** "Tüm görsel tek piksel ızgarasında çizilsin" kuralı devreye girince tek bir çizim iki farklı ölçek taşıyamıyor.
 
 Düzen 2×2: üst sol önden, üst sağ yandan, alt satır boş (filigran oraya düşsün). Önden kare bir **ölçek çıpası**; işiniz bitince atarsınız, ama üretim sırasında modeli tek ölçeğe bağlayan şey odur.
+
+Ölçüldü — iki kareli düzenle yapılan iki üretim:
+
+| | yükseklik oranı | kafa oranı farkı |
+| --- | --- | --- |
+| ayrı üretim (eski yol) | 1.12 | +6.0 puan |
+| iki kare, 1. deneme | **0.990** | −2.5 puan |
+| iki kare, 2. deneme | **0.991** | +1.4 puan |
+
+Ölçek kayması %12'den %1'e indi ve kafa oranı hedef banda girdi. Düzen değişikliği işini yaptı.
+
+### Burun maddesini prompt'a KOYMAYIN
+
+İlk sürümde "burun silüetin sağ kenarından dışarı çıksın" maddesi vardı. Karakterin burnunu gereksiz büyük ve sivri çizdiriyor — aynı karakterin iki üretimi yan yana konduğunda fark gözle belli. Madde çıkarıldığında profil yine doğru çıkıyor (burun zaten dışarı çıkıyor, çünkü profil çizmek onu gerektiriyor) ve ölçümler de daha iyi: kafa oranı farkı −2.5 yerine +1.4 puan.
+
+Ders genel: **profilin doğal sonucu olan bir şeyi ayrıca istemek, modeli onu abartmaya itiyor.** Tek göz ve tek kulak maddeleri kalabilir — onlar abartılabilir şeyler değil, var ya da yok.
 
 ### Prompt
 
@@ -546,15 +566,13 @@ Bu bir kopyalama işi DEĞİL. Kimlik birebir korunacak ama GÖRÜŞ AÇISI değ
 Aşağıdakilerin hepsini tek tek uygula:
 - Yüz profilden görünsün: yalnızca TEK göz görünür (sağdaki), diğer göz kafanın
   arkasında kalır.
-- Burun silüetin SAĞ kenarından dışarı çıksın.
 - Kulak kafanın SOL yarısında, tek başına görünsün.
 - Omuzlar üst üste binsin; iki omuz yan yana DEĞİL, biri diğerinin arkasında.
 - Uzaktaki kol (sol kol) gövdenin arkasında kalsın; ya hiç görünmesin ya da
   gövdenin solundan az bir kısmı görünsün.
 - Ayaklar SAĞA doğru dönük olsun; ayak uçları sağı göstersin.
 - Karakter sağa YÜRÜMESİN — ayakta, nötr duruşta, iki ayak yere basıyor.
-- Silüetin GENİŞLİĞİ soldaki karenin yaklaşık %70-85'i kadar olsun (profilde
-  gövde daralır). YÜKSEKLİK ise birebir aynı kalsın.
+- Profilde gövde biraz daralır; YÜKSEKLİK ise birebir aynı kalsın.
 
 KİMLİK — BİREBİR TAŞINACAK
 - Saç rengi ve modeli, yüz hatları, gözlük, sakal/bıyık, kıyafet, ayakkabı,
@@ -603,17 +621,31 @@ python3 tools/split_sheet.py native.png -o kareler/ --rows 2 --cols 2
 
 Alt satır boş olduğu için `split_sheet` iki kare çıkarır: `kare_00` önden, `kare_01` yandan. Filigran alt satıra düştüyse üç kare çıkar; fazladan olanı silin.
 
+**Uyum skoru burada yanıltıyor.** Ölçülen iki dosyada `pixelart_extract` %21-45 ve %26 uyum bildirdi — [kabul kriterine](#kabul-kriteri-önce-ölç-sonra-düzenle) göre "yeniden ürettirin" bölgesi. Ama çıktılar gözle temizdi ve iki kareli ölçümlerden de geçtiler. Skorun düşük çıkma sebebi gerçek ama bu iş için zararsız: blok **kenarları** keskin, ancak geniş düz alanların içinde çok yavaş bir gradyan var (bir yüz kesitinde 1759 renk). Gradyan, komşu piksel farklarının dağılımını tek tepeye doğru itiyor ve skoru düşürüyor.
+
+Yani bu bölümde skora değil, **iki kareyi birbirine karşı ölçen sayılara ve göze** bakın.
+
+**2048'lik Gemini çıktılarında periyot 10.24 çıkıyor.** İki dosyada da karakter ızgarası tam olarak 2048/200 = 10.24px oldu. Bir dosyada Y ekseni yanlışlıkla harmonik yakaladı (5.12) ve çıktı dikeyde iki kat gerildi — 52×203 gibi imkânsız bir en-boy oranı. Böyle bir şey görürseniz periyodu elle verin:
+
+```bash
+python3 tools/pixelart_extract.py iki_gorunus.png native.png --period 10.24
+```
+
+Kontrol basit: chibi bir karakterin en-boy oranı ~1:2 olmalı. 1:3.8 çıktıysa eksenlerden biri harmoniğe kilitlenmiştir.
+
+**"Dama senin cetvelin" maddesi tutmuyor.** Ölçüldü: iki dosyada dama kareleri 256px ve 128px, karakter bloğu ise 10.24px — yani "bir dama karesi 8 karakter pikseli" kuralı hiç uygulanmamış. Zarar vermedi (çıkarım yine çalıştı) ama bu maddeye güvenmeyin; hizalamayı sağlayan şey o değil.
+
 ### Kontrol listesi
 
 Diğer bölümlerdeki [kabul kriterinin](#kabul-kriteri-önce-ölç-sonra-düzenle) hepsi burada da geçerli. Ek olarak, **iki kareyi birbirine karşı** ölçün:
 
-1. **Yükseklikler eşit mi?** İki karenin siluet yüksekliği aynı piksel sayısında olmalı. Değilse ızgara kuralı tutmamış demektir — yeniden ürettirin, çünkü araçlar ölçek farkını düzeltemez.
-2. **Gerçekten döndü mü?** Sağdaki karenin genişliği soldakinin 0.70-0.86'sı kadar mı. 1'e yakınsa model dönmemiştir.
-3. **Kafa oranı korunmuş mu?** İki karede kafa/gövde oranı 2 puandan fazla ayrılmamalı. Profilde kafa büyürse chibi oranı kayar.
-4. **Tek göz mü?** İki göz görünüyorsa dörtte üç görünüş üretmiştir. Kullanılabilir ama walk sheet'inde tutarsızlık yaratır.
+1. **Yükseklikler eşit mi?** En sert ölçüt bu. İki karenin siluet yüksekliği %1 içinde olmalı (ölçülen iki üretimde 0.990 ve 0.991). Değilse ızgara kuralı tutmamış demektir — yeniden ürettirin, çünkü araçlar ölçek farkını düzeltemez.
+2. **Kafa oranı korunmuş mu?** İki karede kafa/gövde oranı 2-3 puandan fazla ayrılmamalı (ölçülen: −2.5 ve +1.4 puan). Profilde kafa büyürse chibi oranı kayar.
+3. **Tek göz, tek kulak mı?** Gerçekten dönüp dönmediğinin en güvenilir işareti bu. İki göz görünüyorsa dörtte üç görünüş üretmiştir; kullanılabilir ama walk sheet'inde tutarsızlık yaratır.
+4. **Genişlik daraldı mı?** Yardımcı sinyal, sert kapı değil — dolgun karakterlerde oran 1'e yakın çıkabiliyor (ölçüldü: 0.906 ve 1.000, ikisi de doğru profildi). 1'in belirgin üstündeyse şüphelenin.
 5. **Kimlik sızdı mı?** Saç rengi, gözlük, kıyafet iki karede de referanstakiyle aynı mı.
 
-Dördüncü madde için hızlı bir kontrol:
+Üçüncü madde için hızlı bir kontrol:
 
 ```bash
 python3 tools/skeleton.py kareler/kare_01.png --overlay kontrol.png
