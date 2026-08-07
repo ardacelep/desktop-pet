@@ -94,14 +94,23 @@ def govde_kur(on_egitimli: bool = True):
 
 
 class PozModeli:
-    """Govde + SimCC basligi. torch modulu, tembel kuruluyor."""
+    """Govde + SimCC basligi. torch modulu, tembel kuruluyor.
 
-    def __new__(cls, tuval: int = 128, eklem: int = 18, on_egitimli: bool = True):
+    `derinlik` hangi ResNet katmaninin ciktisinin kullanilacagini secer:
+      3 -> layer3, 8x8 oznitelik  (varsayilan)
+      2 -> layer2, 16x16          (dort kat daha ince uzamsal cozunurluk)
+    SimCC uzamsal cozunurluge isi haritasi kadar bagimli degil, ama 8x8 yine
+    de cok kaba olabilir; iki secenek de olculebilsin diye acildi."""
+
+    def __new__(cls, tuval: int = 128, eklem: int = 18, on_egitimli: bool = True,
+                derinlik: int = 3):
         torch = _torch()
         import torch.nn as nn
 
         govde = govde_kur(on_egitimli)
         bin_x = bin_y = tuval * BOLME
+        kanal = {2: 512, 3: 1024}[derinlik]
+        izgara = {2: 16, 3: 8}[derinlik]
 
         class _Model(nn.Module):
             def __init__(self):
@@ -109,18 +118,19 @@ class PozModeli:
                 self.govde = govde
                 # 1024 kanal -> eklem basina bir oznitelik haritasi
                 self.azalt = nn.Sequential(
-                    nn.Conv2d(1024, 256, 1), nn.BatchNorm2d(256), nn.ReLU(inplace=True),
+                    nn.Conv2d(kanal, 256, 1), nn.BatchNorm2d(256), nn.ReLU(inplace=True),
                     nn.Conv2d(256, eklem, 1))
                 # SimCC: her eklemin uzamsal haritasi -> iki 1B dagilim
-                self.x_bas = nn.Linear(8 * 8, bin_x)
-                self.y_bas = nn.Linear(8 * 8, bin_y)
-                self.eklem = eklem
+                self.x_bas = nn.Linear(izgara * izgara, bin_x)
+                self.y_bas = nn.Linear(izgara * izgara, bin_y)
+                self.eklem, self.derinlik = eklem, derinlik
 
             def forward(self, x):
                 h = self.govde.conv1(x); h = self.govde.bn1(h)
                 h = self.govde.relu(h); h = self.govde.maxpool(h)
                 h = self.govde.layer1(h); h = self.govde.layer2(h)
-                h = self.govde.layer3(h)                    # (B,1024,8,8)
+                if self.derinlik == 3:
+                    h = self.govde.layer3(h)                # (B,1024,8,8)
                 h = self.azalt(h)                           # (B,K,8,8)
                 # flatten DEGIL reshape: govde ciktisi bitisik olmayabiliyor
                 # ve view geri gecisde patliyor (MPS'te olculdu).
@@ -129,6 +139,7 @@ class PozModeli:
 
         m = _Model()
         m.tuval, m.bin_x, m.bin_y = tuval, bin_x, bin_y
+        m.derinlik_secimi = derinlik
         return m
 
 
@@ -239,7 +250,8 @@ def hata_px(model, kume, dev, tuval, parti=16):
     return toplam / max(n, 1)
 
 
-def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128):
+def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
+         derinlik=3):
     torch = _torch()
     import torch.nn.functional as F
 
@@ -253,7 +265,7 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128):
 
     ke, kt = Kume(kok, egitim, tuval), Kume(kok, test, tuval)
     dev = aygit()
-    model = PozModeli(tuval, len(sk.LABELS), on_egitimli).to(dev)
+    model = PozModeli(tuval, len(sk.LABELS), on_egitimli, derinlik).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     plan = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epok)
     print(f"Aygit: {dev}   parametre: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
@@ -279,7 +291,7 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128):
         if eh < en_iyi:
             en_iyi = eh
             torch.save({"model": model.state_dict(), "tuval": tuval,
-                        "holdout": holdout}, cikti)
+                        "holdout": holdout, "derinlik": derinlik}, cikti)
             isaret = "  <- kaydedildi"
         print(f"  epok {e+1:3d}/{epok}  kayip {kayip_top/max(adim,1):.4f}  "
               f"holdout hatasi {eh:6.2f}px" + (f"  egitim {th:.2f}px" if th else "")
@@ -299,6 +311,8 @@ def main(argv=None):
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--ckpt", default=None)
+    p.add_argument("--depth", type=int, default=3, choices=(2, 3),
+                   help="Hangi ResNet katmani: 3=layer3 (8x8), 2=layer2 (16x16)")
     p.add_argument("--scratch", action="store_true",
                    help="On egitimli govde KULLANMA (karsilastirma icin)")
     args = p.parse_args(argv)
@@ -306,7 +320,7 @@ def main(argv=None):
     ckpt = args.ckpt or os.path.join(args.veri, "model.pt")
     if args.komut == "train":
         egit(args.veri, args.holdout, args.epochs, args.batch, args.lr,
-             ckpt, on_egitimli=not args.scratch)
+             ckpt, on_egitimli=not args.scratch, derinlik=args.depth)
     else:
         torch = _torch()
         d = torch.load(ckpt, map_location="cpu")
