@@ -27,7 +27,6 @@ import argparse
 import collections
 import json
 import os
-import shutil
 import sys
 
 
@@ -65,14 +64,19 @@ def birlestir(dizinler: list[str], cikti: str) -> int:
         return 1
 
     gorseller = os.path.join(cikti, "gorseller")
-    shutil.rmtree(gorseller, ignore_errors=True)
     os.makedirs(gorseller, exist_ok=True)
 
+    # Dizin SILINIP yeniden kurulmuyor, FARK uygulanıyor. Silip kurmak, o
+    # sirada ayni kumeyi okuyan bir egitim kosusunu ortasindan vuruyordu.
+    # Gorseller icerik hash'iyle adlandirildigi icin ayni ad = ayni icerik:
+    # duran dosyaya dokunmadan sadece eksikler ekleniyor, artanlar siliniyor.
+    hedefler: set[str] = set()
     toplam = 0
     with open(os.path.join(cikti, "etiketler.jsonl"), "w") as f:
         for dizin, satirlar in kaynaklar.items():
             for s in satirlar:
                 ad = os.path.basename(s["gorsel"])
+                hedefler.add(ad)
                 hedef = os.path.join(gorseller, ad)
                 if not os.path.exists(hedef):
                     os.link(os.path.join(dizin, s["gorsel"]), hedef)
@@ -80,9 +84,14 @@ def birlestir(dizinler: list[str], cikti: str) -> int:
                 f.write(json.dumps(y, ensure_ascii=False) + "\n")
                 toplam += 1
 
+    artan = [a for a in os.listdir(gorseller) if a not in hedefler]
+    for a in artan:
+        os.remove(os.path.join(gorseller, a))
+
     hepsi = [s for v in kaynaklar.values() for s in v]
     ust = collections.Counter(s["kaynak"].split("/")[0] for s in hepsi)
-    print(f"{toplam} ornek -> {cikti}")
+    print(f"{toplam} ornek -> {cikti}" + (f"  ({len(artan)} eski gorsel silindi)"
+                                          if artan else ""))
     for ad, n in sorted(ust.items()):
         kim = len({s["kaynak"] for s in hepsi if s["kaynak"].split("/")[0] == ad})
         print(f"  {ad:12s} {n:5d} ornek  {kim:4d} karakter")
