@@ -38,3 +38,7 @@ desktop.ini
 # Yerel ortam
 .env
 .env.local
+
+# Poz modeli veri seti — uretilmis, buyuk, ve etiketleri ucretli API'den geliyor.
+# Onbellek dizini sayesinde yeniden uretmek ucretsiz.
+_data/
