@@ -57,10 +57,12 @@ pet/
 │   ├── check-characters.js       # Karakter doğrulayıcı (npm run check)
 │   ├── selftest-hittest.js       # Tıklama geçirgenliği testi (npm run check:hittest)
 │   ├── selftest-bubble.js        # Konuşma balonu testi (npm run check:bubble)
+│   ├── pixellab_karakter.py      # Tek görselden karakter üretir (npm run karakter)
 │   ├── pixelart_extract.py       # AI çıktısını gerçek çözünürlüğe indirir
 │   ├── split_sheet.py            # Sheet'i tek tek karelere böler
 │   ├── pack_sheet.py             # Kareleri hizalayıp sprite sheet yapar
 │   ├── grid_ref.py               # Bitmiş sheet'i Gemini'ye ızgara referansı yapar
+│   ├── test_pixellab_karakter.py # Boru hattının ağa çıkmayan parçalarının testleri
 │   ├── test_pixelart_extract.py  # Çıkarıcının regresyon testleri
 │   ├── test_split_sheet.py       # Bölücünün regresyon testleri
 │   ├── test_pack_sheet.py        # Hizalayıcının regresyon testleri

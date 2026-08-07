@@ -14,6 +14,41 @@ npm start
 
 ## Karakter ekleme akışı
 
+İki yol var. **Elinde tek bir karakter görseli varsa** en kısası PixelLab boru
+hattı: animasyonları o üretir, sheet'leri paketler, `meta.json`'ı yazar.
+
+```bash
+npm run karakter
+```
+
+Argümansız çalıştırınca sorarak ilerler; komut satırından da verilebilir:
+
+```bash
+python3 tools/pixellab_karakter.py kedi.png --ad kedi --display-name Kedi
+```
+
+Girdi **önden bakan, şeffaf zeminli, native çözünürlükte** tek bir PNG olmalı —
+ham AI çıktısını doğrudan verme, önce `pixelart_extract.py`'den geçir. Araç
+görseli 8 yöne döndürüp iskelet şablonlarıyla idle (önden) ve yürüyüş (yandan)
+animasyonlarını üretir, `characters/<ad>/` altına yazar ve `npm run check`
+çalıştırır.
+
+Ücretli: karakter başına 3-4 generation. `--dry-run` üretmeden maliyeti söyler,
+`--seed` üretimi tekrarlanabilir yapar. Yarıda kesilirse ödenmiş adımlar
+`_data/pixellab/<ad>/durum.json`'a yazıldığı için tekrar çalıştırınca kaldığı
+yerden devam eder. Anahtar `.env` içinde `PIXELLAB_API_KEY=` olarak durur.
+
+Karakterin adı ve tarifi sorulur; animasyon şablonları, replikler ve kare
+süreleri varsayılan geçer — hepsi sonradan `meta.json`'dan değiştirilebilir.
+
+Tarif zorunlu bir alan ama boş geçilebilir (varsayılanı vardır): görseli
+üretmiyor, PixelLab'ın karakteri 8 yöne döndürürken neye baktığını anlaması
+için. **Dört ayaklı bir karakter üretiyorsan** `--govde` (menüde "iki ayaklı
+mı?" sorusu) mutlaka doğru olsun — iskelet ona göre kuruluyor ve yanlış
+şablonda yürüyüş animasyonu bozulur.
+
+**Kareleri kendin üretiyorsan** aşağıdaki elle akış geçerli.
+
 Sprite'ları Gemini'ye ürettireceksen prompt'lar [PROMPTS.md](PROMPTS.md) içinde. Ürettiysen, **önce** [tools/pixelart_extract.py](tools/pixelart_extract.py) ile gerçek çözünürlüğe indir — ayrıntı [README](README.md#ai-ile-üretilen-spriteları-hazırlama) içinde. Ham AI çıktısını doğrudan `characters/` altına koyma: dosya 1024×1024 görünür ama içindeki gerçek pixel art çok daha küçüktür ve arka planındaki dama deseni gerçek şeffaflık değildir.
 
 Animasyon karelerini **elle yan yana dizme.** Her kare ayrı bir üretim olduğu için karakter tuval içinde farklı yerde durur; elle dizersen animasyon titrer. [tools/pack_sheet.py](tools/pack_sheet.py) kareleri ayak çizgisine ve gövdeye göre hizalar, ortak kare kutuya oturtur ve `meta.json` bloğunu basar:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -462,6 +463,39 @@ def adim_rig() -> None:
         print(f"\n✓ Bitti: {kisalt(cikti)}\n  Tüm pozlar yan yana: {kisalt(onizleme)}")
 
 
+def adim_pixellab() -> None:
+    """Tek görselden PixelLab ile tam karakter üretir."""
+    print("\n— PixelLab ile karakter üret (pixellab_karakter.py) —")
+    print("  Önden bakan tek bir PNG'den idle ve yürüyüş animasyonlarını")
+    print("  ürettirip characters/<ad>/ altına kurar. Girdi native çözünürlükte")
+    print("  ve şeffaf zeminli olmalı — ham AI çıktısıysa önce 'Pixel art çıkar'.")
+    print("  ÜCRETLİ: karakter başına 3-4 generation.")
+
+    gorsel = dosya_sor("Karakter görseli (önden bakan native PNG)")
+    tahmin = re.sub(r"[^a-z0-9]", "",
+                    os.path.splitext(os.path.basename(gorsel))[0].lower())
+    ad = sor("Klasör adı (küçük harf, ASCII)", tahmin or "karakter")
+    gosterilen = sor("Ekranda görünecek ad", ad.capitalize())
+    tarif = sor("Karakter tarifi (rotasyon için, İngilizce)",
+                "full body pixel art character, front view, standing")
+
+    ek: list[str] = []
+    # Dört ayaklıda iskelet şablonu değişmek zorunda; iki ayaklıda varsayılan
+    # doğru olduğu için soru tek Enter'la geçiliyor.
+    if not evet_mi("Karakter iki ayaklı mı (insan/insansı)?", True):
+        ek += ["--govde", sor("Gövde tipi (bear/cat/dog/horse/lion)", "cat")]
+    if evet_mi("Önizleme GIF'leri de üretilsin mi?", True):
+        ek.append("--gif")
+    # Maliyeti üretmeden gösterip onay al: geri alınamaz ve ücretli.
+    arac("pixellab_karakter.py", gorsel, "--ad", ad, "--dry-run")
+    if not evet_mi("Üretilsin mi?", True):
+        return
+
+    if arac("pixellab_karakter.py", gorsel, "--ad", ad,
+            "--display-name", gosterilen, "--tarif", tarif, *ek):
+        print(f"\n✓ Bitti: characters/{ad}/")
+
+
 def adim_check() -> None:
     """characters/ altındaki her karakteri doğrular."""
     print("\n— Karakterleri doğrula (check-characters.js) —")
@@ -475,7 +509,8 @@ def adim_test() -> None:
     print("\n— Araç testleri —")
     for dosya in ("test_pixelart_extract.py", "test_split_sheet.py",
                   "test_pack_sheet.py", "test_grid_ref.py", "test_skeleton.py",
-                  "test_pose_dataset.py", "test_veri_kapilari.py"):
+                  "test_pose_dataset.py", "test_veri_kapilari.py",
+                  "test_pixellab_karakter.py"):
         if not arac(dosya):
             print(f"\n✗ {dosya} başarısız.")
             return
@@ -487,6 +522,7 @@ def adim_test() -> None:
 # ---------------------------------------------------------------------------
 
 MENU = [
+    ("PixelLab ile karakter üret", "tek görselden, ücretli", adim_pixellab),
     ("Gemini çıktısını sprite sheet'e çevir", "tam boru hattı", akis_tam),
     ("Pixel art çıkar", "pixelart_extract", adim_extract),
     ("Sheet'i karelere böl", "split_sheet", lambda: adim_split()),
