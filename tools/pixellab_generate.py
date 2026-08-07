@@ -247,6 +247,13 @@ def main(argv=None):
     os.makedirs(gorseller, exist_ok=True)
     os.makedirs(onbellek, exist_ok=True)
 
+    # Etiketler KARAKTER BASINA yaziliyor, sonda toplu degil: her karakter
+    # gercek para (1.1 generation) ve toplu yazimda ortada dusen bir kosu
+    # odenmis isin tamamini goturuyordu. flush da sart — cikti dosyaya
+    # yonlendirilince print blok tamponlu olur ve ilerleme hic gorunmez.
+    yol = os.path.join(args.output, "etiketler.jsonl")
+    ef = open(yol, "a" if os.path.exists(yol) else "w", buffering=1)
+
     rng = np.random.default_rng(args.seed)
     satirlar, elenen = [], {}
     for i in range(args.count):
@@ -258,7 +265,7 @@ def main(argv=None):
         tamam, sebep = kabul_edilebilir(ham, args.yuz_kapisi)
         if not tamam:
             elenen[sebep] = elenen.get(sebep, 0) + 1
-            print(f"  [{i+1}/{args.count}] elendi: {sebep}")
+            print(f"  [{i+1}/{args.count}] elendi: {sebep}", flush=True)
             continue
 
         tuval, _, _, _ = pdset.kanvasa_yerlestir(ham, args.canvas)
@@ -283,18 +290,16 @@ def main(argv=None):
             # parti de 0000'dan basladigi icin farkli karakterler ayni kimlige
             # dusuyor ve bolmede ayni "karakter" hem egitime hem teste
             # girebiliyordu.
-            satirlar.append({"gorsel": f"gorseller/{dosya}",
-                             "kaynak": f"uretim/{args.focus[0]}{args.seed}_{i:04d}",
-                             "artirma": ad,
-                             "keypoints": k, "tarif": tarif, "stil": stil})
-        print(f"  [{i+1}/{args.count}] ok  ({len(ornekler)} ornek)  {tarif[:58]}…")
+            s = {"gorsel": f"gorseller/{dosya}",
+                 "kaynak": f"uretim/{args.focus[0]}{args.seed}_{i:04d}",
+                 "artirma": ad,
+                 "keypoints": k, "tarif": tarif, "stil": stil}
+            satirlar.append(s)
+            ef.write(json.dumps(s, ensure_ascii=False) + "\n")
+        print(f"  [{i+1}/{args.count}] ok  ({len(ornekler)} ornek)  {tarif[:58]}…",
+              flush=True)
 
-    yol = os.path.join(args.output, "etiketler.jsonl")
-    kip = "a" if os.path.exists(yol) else "w"
-    with open(yol, kip) as f:
-        for s in satirlar:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
-
+    ef.close()
     kalan2, _ = pdset.bakiye(gizli)
     karakter = len({s["kaynak"] for s in satirlar})
     print(f"\n{len(satirlar)} ornek yazildi ({karakter} karakterden)")
