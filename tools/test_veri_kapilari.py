@@ -172,15 +172,51 @@ def test_kapilar_bos_ve_dolu_tuvali_eliyor():
 # Uretim kapilari
 # ---------------------------------------------------------------------------
 
+def yuzlu_figur(b=128):
+    """Kafasinda IC AYRINTI olan figur — gorunur yuz taklidi."""
+    im = np.zeros((b, b, 4), np.uint8)
+    im[10:118, 45:80, :3] = (150, 90, 60)
+    im[10:118, 45:80, 3] = 255
+    rng = np.random.default_rng(0)
+    for _ in range(30):                       # goz/agiz/burun yerine adaciklar
+        y, x = int(rng.integers(14, 40)), int(rng.integers(48, 76))
+        im[y:y + 2, x:x + 2, :3] = rng.integers(0, 255, 3)
+    return im
+
+
+def test_yuz_gorunurlugu_kapisi():
+    """REGRESYON: uretim bazen sirti donuk / kapusonlu figur veriyor.
+
+    Cikarimda hep one bakan karakter kullanilacak, ve yuzu olmayan figurde
+    etiketleyicinin goz/burun/kulak icin dayanacagi sinyal yok — o etiketler
+    tahmin olur. Olculdu: ortme kelimeleri iceren istemler %38 yuz
+    gorunurlugu uretti (genel havuz %82).
+
+    Olcut "sclera var mi" OLAMAZ: faküs'un de sclera'si yok ve o tam da
+    tutmak istedigimiz karakter. Yerine kafadaki IC AYRINTI sayiliyor —
+    gercek bes karakterimizde 50-87, bozuk figurlerde 1-9."""
+    import pixellab_generate as pg
+    b = 128
+    check("yuz kapisi: ayrintili kafa gecti", pg.kabul_edilebilir(yuzlu_figur(b))[0])
+
+    duz = np.zeros((b, b, 4), np.uint8)       # kapusonlu/arkadan gorunum taklidi
+    duz[10:118, 45:80, :3] = (60, 60, 70)
+    duz[10:118, 45:80, 3] = 255
+    tamam, sebep = pg.kabul_edilebilir(duz)
+    check("yuz kapisi: duz kutle elendi", not tamam and sebep == "yuz gorunmuyor", sebep)
+
+    check("yuz kapisi: ayrinti sayisi ayirt ediyor",
+          pg.kafa_ayrintisi(yuzlu_figur(b)) > pg.KAFA_AYRINTI_ESIGI > pg.kafa_ayrintisi(duz),
+          f"{pg.kafa_ayrintisi(yuzlu_figur(b))} vs {pg.kafa_ayrintisi(duz)}")
+
+
 def test_uretim_kapisi():
     """Uretilen gorsel ETIKETLEMEDEN once eleniyor — etiketleme ayrica
     ucretli, bozuk ornege para harcamanin anlami yok."""
     import pixellab_generate as pg
     b = 128
 
-    iyi = np.zeros((b, b, 4), np.uint8)
-    iyi[10:118, 45:80, :3] = (150, 90, 60)
-    iyi[10:118, 45:80, 3] = 255
+    iyi = yuzlu_figur(b)
     tamam, sebep = pg.kabul_edilebilir(iyi)
     check("uretim: saglam gorsel gecti", tamam, sebep)
 
@@ -196,6 +232,7 @@ def test_uretim_kapisi():
 
     # Genis ama KISA: doluluk kapisini gecmeli ki yukseklik kapisi olculsun
     kisa = np.zeros((b, b, 4), np.uint8)
+    kisa[50:85, 20:110, :3] = (150, 90, 60)
     kisa[50:85, 20:110, 3] = 255
     tamam4, sebep4 = pg.kabul_edilebilir(kisa)
     check("uretim: kisa figur elendi", not tamam4 and sebep4 == "figur kisa kalmis",
@@ -221,6 +258,7 @@ def main():
         test_kapilar_iyi_ornegi_geciriyor,
         test_kapilar_kacak_eklemi_eliyor,
         test_kapilar_bos_ve_dolu_tuvali_eliyor,
+        test_yuz_gorunurlugu_kapisi,
         test_uretim_kapisi,
         test_etiket_esleme_tam,
     ]

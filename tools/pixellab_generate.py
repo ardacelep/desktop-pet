@@ -71,18 +71,30 @@ AYRINTI = ["low detail", "medium detail", "highly detailed"]
 #   - bol paca / akiskan kiyafet -> bacaklar siluette birlesiyor
 #   - koyu goz -> sclera sinyali yok
 # Genel karakter almak yerine bu bolgeyi doldurmak daha verimli olmali.
+#
+# ILK SURUM YANLISTI ve olculdu: ORTME ozelliklerini istemek ("hooded head",
+# "cloak covering the shoulders", "robe reaching the floor") yuzu tamamen
+# kapali figurler uretti — hedefli partide gozu tespit edilebilen oran %38,
+# genel partide %82, gercek karakterlerimizde 5'te 4. Cikarimda hep yuzu
+# gorunen karakter kullanacagiz, yani o dagilim hic karsilasmayacagimiz bir
+# sey; ustelik yuzu olmayan figurde etiketleyicinin goz/burun/kulak icin
+# dayanacagi sinyal de yok.
+#
+# Istenmesi gereken sey faküs GIBI KARAKTERLER: yuzu gorunen, uzun sacli,
+# ince govdeli, bol pacali. Ortme kelimeleri cikarildi, yuzun gorunur olmasi
+# acikca istendi ve ayrica KAPIYLA zorlaniyor (bkz. kabul_edilebilir).
 ZOR_GOVDE = ["tall slim adult", "very tall lanky adult", "tall thin teenager",
              "slender tall adult with long limbs"]
-ZOR_KIYAFET = ["long flowing black robe reaching the floor",
-               "wide-leg baggy trousers and sleeveless top",
-               "long dress covering the legs",
-               "oversized coat reaching the knees",
-               "wide palazzo pants and tank top",
-               "long cloak covering the shoulders"]
-ZOR_SAC = ["very long hair covering the shoulders",
+ZOR_KIYAFET = ["wide-leg baggy trousers and tank top",
+               "long dress down to the ankles",
+               "long open coat and wide trousers",
+               "wide palazzo pants and t-shirt",
+               "flowing long skirt and blouse",
+               "loose jumpsuit with wide legs"]
+ZOR_SAC = ["long straight hair past the shoulders",
            "long wavy hair down to the waist",
-           "long straight hair over both shoulders",
-           "hooded head with hair covering the neck"]
+           "long ponytail and visible face",
+           "shoulder-length hair with visible face"]
 
 
 def istem(rng: np.random.Generator, odak: str = "genel") -> tuple[str, dict]:
@@ -95,7 +107,8 @@ def istem(rng: np.random.Generator, odak: str = "genel") -> tuple[str, dict]:
         govde, kiyafet, sac = GOVDE, KIYAFET, SAC
     tarif = (f"full body pixel art character, {rng.choice(govde)}, "
              f"{rng.choice(kiyafet)}, {rng.choice(sac)}, "
-             "standing straight, arms down at sides, facing viewer, "
+             "standing straight, arms down at sides, facing the viewer, "
+             "face clearly visible, front view, "
              "full body visible from head to feet")
     return tarif, {"outline": str(rng.choice(KONTUR)),
                    "shading": str(rng.choice(GOLGE)),
@@ -122,6 +135,51 @@ def uret(gizli: str, tarif: str, stil: dict, boyut: int, tohum: int,
     return None
 
 
+KAFA_AYRINTI_ESIGI = 20
+
+
+def kafa_ayrintisi(rgba: np.ndarray, tol: int = 24, en_az: int = 3) -> int:
+    """Kafa bolgesindeki ayri renk adaciklarinin sayisi.
+
+    YUZUN GORUNUR OLUP OLMADIGINI olcuyor. Gerekli, cunku uretim bazen sirti
+    donuk ya da kapusonla ortulmus figur veriyor; cikarimda hep one bakan
+    karakter kullanacagiz ve yuzu olmayan figurde etiketleyicinin
+    goz/burun/kulak icin dayanacagi sinyal de yok — o etiketler tahmin olur.
+
+    Neden BU olcut: "sclera var mi" diye bakmak yanlis olurdu, cunku faküs'un
+    de sclera'si yok ve o tam da tutmak istedigimiz karakter. `yuz_bolgesi`
+    de yetmiyor — kapusonlu figurde "ust yaridaki en buyuk bolge" kapusonun
+    kendisi cikiyor. Gorunur bir yuz ise IC AYRINTI demek: goz, agiz, burun
+    ayri renk adaciklari uretiyor; kapusonlu ya da arkadan gorunen kafa duz
+    bir kutle.
+
+    Olculdu: gercek bes karakterimiz 50-87 adacik; uretimin genel havuzu
+    medyan 58 (%10 dilim 19); ortme kelimeleriyle uretilen hedefli parti
+    medyan 36 ve %10 dilim 9, en dusugu 1. Esik ikisinin arasina, 20'ye
+    konuldu — gercek karakterlerin hepsinin comfortably altinda."""
+    from pixelart_extract import label_components, merge_near_colors, pack_rgb
+
+    opak = rgba[:, :, 3] > 0
+    ys, _ = np.where(opak)
+    if ys.size == 0:
+        return 0
+    y0, y1 = int(ys.min()), int(ys.max())
+    kafa = opak.copy()
+    kafa[y0 + int(0.45 * (y1 - y0)):, :] = False
+    if kafa.sum() < 40:
+        return 0
+    temiz = rgba.copy()
+    temiz[~kafa] = 0
+    anah = pack_rgb(merge_near_colors(temiz, tol)[:, :, :3])
+    n = 0
+    for v in np.unique(anah[kafa]):
+        etiket, k = label_components((anah == v) & kafa)
+        for i in range(1, k + 1):
+            if int((etiket == i).sum()) >= en_az:
+                n += 1
+    return n
+
+
 def kabul_edilebilir(rgba: np.ndarray) -> tuple[bool, str]:
     """Uretilen gorsel egitim verisi olmaya uygun mu?
 
@@ -142,6 +200,9 @@ def kabul_edilebilir(rgba: np.ndarray) -> tuple[bool, str]:
     boy = (ys.max() - ys.min() + 1) / h
     if boy < 0.45:
         return False, "figur kisa kalmis"
+
+    if kafa_ayrintisi(rgba) < KAFA_AYRINTI_ESIGI:
+        return False, "yuz gorunmuyor"
     return True, ""
 
 
