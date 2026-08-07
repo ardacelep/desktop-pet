@@ -612,14 +612,19 @@ ya da keskinleştirme filtresi uygulama.
 
 ### Gelen dosyayı işleme
 
-Önce native'e indirin, sonra iki kareyi ayırın:
+Tek komut — çıkarım, bölme ve kabul ölçümleri birlikte:
 
 ```bash
-python3 tools/pixelart_extract.py iki_gorunus.png native.png --verbose
-python3 tools/split_sheet.py native.png -o kareler/ --rows 2 --cols 2
+python3 tools/iki_gorunus.py gemini.png -o _calisma/karakter
 ```
 
-Alt satır boş olduğu için `split_sheet` iki kare çıkarır: `kare_00` önden, `kare_01` yandan. Filigran alt satıra düştüyse üç kare çıkar; fazladan olanı silin.
+`onden.png` ve `yandan.png` yazar, sonra aşağıdaki ölçütleri kendi uygular ve geçmezse hata koduyla döner. Menüden de erişilebilir (`npm run tools` → "İki görünüşü ayır").
+
+**`split_sheet --rows 2 --cols 2` KULLANMAYIN.** Bu bir tuzak: `pixelart_extract` boş alt satırı zaten kırpıyor, geriye 1×2 düzen kalıyor ve 2×2 zorlamak her karakteri ortadan ikiye biçiyor (ölçüldü: 53×108 yerine dört adet 75×54). Otomatik bölme doğru sonucu veriyor — `iki_gorunus.py` onu kullanıyor.
+
+Filigran ayrı bir "kare" olarak çıkabiliyor (ölçüldü: 9×9, 29 opak piksel). Araç sayıya değil **boyuta** bakıp en büyük iki bileşeni aldığı için bu kendiliğinden eleniyor.
+
+**Ana karakteri de bu çıktıdan alın.** Eski önden görseli saklayıp yalnızca yandan kareyi almak ölçek çıpasını boşa düşürür — iki sprite yine farklı ölçekte kalır ve `meta.json` tek bir `nativeFrameSize` tuttuğu için karakter uygulamada idle↔walk geçişinde boyut değiştirir.
 
 **Uyum skoru burada yanıltıyor.** Ölçülen iki dosyada `pixelart_extract` %21-45 ve %26 uyum bildirdi — [kabul kriterine](#kabul-kriteri-önce-ölç-sonra-düzenle) göre "yeniden ürettirin" bölgesi. Ama çıktılar gözle temizdi ve iki kareli ölçümlerden de geçtiler. Skorun düşük çıkma sebebi gerçek ama bu iş için zararsız: blok **kenarları** keskin, ancak geniş düz alanların içinde çok yavaş bir gradyan var (bir yüz kesitinde 1759 renk). Gradyan, komşu piksel farklarının dağılımını tek tepeye doğru itiyor ve skoru düşürüyor.
 

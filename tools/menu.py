@@ -411,6 +411,26 @@ def akis_tam() -> None:
     print("  kopyala, sonra doğrulamak için bu menüden 6'yı çalıştır.")
 
 
+def adim_iki_gorunus() -> None:
+    """PROMPTS.md bolum 5'teki iki gorunuslu ciktiyi onden+yandan kareye ayirir.
+
+    Ayri bir adim, cunku bu ikisi ayni animasyonun kareleri DEGIL — iki farkli
+    gorunus. Tam boru hatti onlari sprite sheet'e paketlerdi."""
+    print("\n— İki görünüşü ayır —")
+    print("  Gemini'ye 2x2 düzende önden + sağa bakan hali ürettirdiysen buradan geç.")
+    print("  Önden kare ÖLÇEK ÇIPASI: ana karakteri de o çıktıdan al, eskisini saklama.")
+    girdi = dosya_sor("Ham Gemini PNG (iki görünüş)", haric=TURETILMIS)
+    kok = os.path.splitext(girdi)[0]
+    cikti = temizle(sor("Çıktı klasörü", kisalt(kok + "_gorunusler")))
+    periyot = sayi_sor("Izgara periyodu (boş = otomatik; 2048'lik çıktıda 10.24)")
+    bg = sayi_sor("Dama toleransı (boş = ölçülerek seçilsin)")
+    if arac("iki_gorunus.py", girdi, "-o", cikti,
+            *secenek("--period", periyot), *secenek("--bg-tol", bg)):
+        print(f"\n✓ Bitti: {kisalt(cikti)}")
+    else:
+        print("\n✗ Ölçüm kabul etmedi — yukarıdaki işaretli maddeye bak.")
+
+
 def adim_grid_ref() -> None:
     """Bitmis sheet -> Gemini'ye verilecek izgara referansi."""
     print("\n— Izgara referansı üret (grid_ref.py) —")
@@ -524,6 +544,7 @@ def adim_test() -> None:
 MENU = [
     ("PixelLab ile karakter üret", "tek görselden, ücretli", adim_pixellab),
     ("Gemini çıktısını sprite sheet'e çevir", "tam boru hattı", akis_tam),
+    ("İki görünüşü ayır (önden + sağa bakan)", "iki_gorunus", adim_iki_gorunus),
     ("Pixel art çıkar", "pixelart_extract", adim_extract),
     ("Sheet'i karelere böl", "split_sheet", lambda: adim_split()),
     ("Kareleri hizala/paketle", "pack_sheet", lambda: adim_pack()),
