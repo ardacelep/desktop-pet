@@ -34,9 +34,12 @@ ETIKET DONUSUMU
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import multiprocessing as mp
 import os
 import sys
+import time
 
 import numpy as np
 from PIL import Image
@@ -212,6 +215,66 @@ def cevir(kayit: dict, kok: str, hucre: int, renk: int, tuval: int):
     return (t, k, olcum) if kabul else (None, None, olcum)
 
 
+# --------------------------------------------------------------------------
+# Paralel kosum
+#
+# Isin %97'si PixelOE'de geciyor (olculdu: ornek basina 12.3s; yukleme 0.02s,
+# zemin ayiklama 0.35s). Torch'un kendi ic paralelligi bu boyuttaki evrisimlerde
+# olceklenmiyor, o yuzden her isci TEK is parcacigina sabitlenip is SURECLERE
+# bolunuyor. 4000 ornek tek surecte ~14 saat; 8 iscide ~2 saat.
+# --------------------------------------------------------------------------
+_AYAR: dict = {}
+
+
+def _isci_kur(ayar: dict) -> None:
+    global _AYAR
+    _AYAR = ayar
+    import torch
+    torch.set_num_threads(1)   # yoksa 8 isci 10 cekirdegi paylasmak icin bogusur
+
+
+def _isci(kayit: dict):
+    try:
+        t, kp, olcum = cevir(kayit, _AYAR["data"], _AYAR["cell"],
+                             _AYAR["colors"], _AYAR["canvas"])
+    except Exception as err:                                      # noqa: BLE001
+        return kayit["bn"], None, None, {"sebep": f"hata:{type(err).__name__}"}
+    return kayit["bn"], t, kp, olcum
+
+
+@contextlib.contextmanager
+def _akis(kayitlar: list[dict], ayar: dict, isci: int):
+    """Sonuclari SIRAYLA veren akis. `--jobs 1` tek surecte kalir (hata
+    ayiklamasi kolay olsun); digerlerinde spawn'li havuz kullanilir —
+    fork'lanmis surecte torch kilitlenebiliyor."""
+    if isci <= 1:
+        _isci_kur(ayar)
+        yield (_isci(k) for k in kayitlar)
+        return
+    ctx = mp.get_context("spawn")
+    havuz = ctx.Pool(isci, initializer=_isci_kur, initargs=(ayar,))
+    try:
+        # imap SIRAYI korur; devam etme indekse dayandigi icin bu sart.
+        yield havuz.imap(_isci, kayitlar, chunksize=2)
+    finally:
+        havuz.terminate()
+        havuz.join()
+
+
+def _jsonl_oku(yol: str) -> list[dict]:
+    """Yarim kalmis SON satiri atar — kosu ortasinda kesilmis dosya normaldir."""
+    if not os.path.exists(yol):
+        return []
+    cikti = []
+    with open(yol) as f:
+        for ham in f:
+            try:
+                cikti.append(json.loads(ham))
+            except json.JSONDecodeError:
+                break
+    return cikti
+
+
 def main(argv=None):
     kok_proje = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser(description="Chen veri setini pixel art'a cevirir.")
@@ -223,6 +286,14 @@ def main(argv=None):
     p.add_argument("--colors", type=int, default=48)
     p.add_argument("--canvas", type=int, default=128)
     p.add_argument("--sheet", action="store_true", help="Gozle inceleme sayfasi uret")
+    p.add_argument("--resume", action="store_true",
+                   help="Yarim kalmis kosuya kaldigi yerden devam et")
+    # Cekirdeklerin ucte biri. Hepsini doldurmak makineyi kullanilamaz hale
+    # getiriyor: is CPU'ya doymus halde kaliyor ve arayuze pay kalmiyor.
+    # Ucte birle kosu birkac kat hizli ama makine akici kaliyor.
+    p.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 3) // 3),
+                   help="Paralel isci sayisi (1 = tek surec). Varsayilan "
+                        "cekirdegin ucte biri; makineyi bogmamak icin.")
     args = p.parse_args(argv)
 
     with open(os.path.join(args.data, "raw", "annotations.json")) as f:
@@ -233,26 +304,60 @@ def main(argv=None):
     os.makedirs(gorseller, exist_ok=True)
     satirlar, sebepler, ornekler = [], {}, []
 
-    for i, k in enumerate(anahtarlar):
-        try:
-            t, kp, olcum = cevir(ann[k], args.data, args.cell, args.colors, args.canvas)
-        except Exception as err:                                  # noqa: BLE001
-            t, kp, olcum = None, None, {"sebep": f"hata:{type(err).__name__}"}
-        if t is None:
-            sebepler[olcum.get("sebep", "?")] = sebepler.get(olcum.get("sebep", "?"), 0) + 1
-            continue
-        dosya = f"{ann[k]['bn']}.png"
-        Image.fromarray(t).save(os.path.join(gorseller, dosya))
-        satirlar.append({"gorsel": f"gorseller/{dosya}", "kaynak": f"chen/{ann[k]['bn']}",
-                         "artirma": "ham", "keypoints": kp, "olcum": olcum})
-        if len(ornekler) < 24:
-            ornekler.append((t, kp))
-        if (i + 1) % 50 == 0:
-            print(f"  {i+1}/{len(anahtarlar)} islendi, {len(satirlar)} kabul")
+    # Etiketler ANINDA yaziliyor, sonda toplu degil. 4000 ornek saatler suruyor;
+    # toplu yazimda 3900'de dusen bir kosu her seyi goturur, ustelik kosarken
+    # `tools/veri_onizle.py` ile ara sonuca bakmak da mumkun olmaz.
+    etiket_yolu = os.path.join(args.output, "etiketler.jsonl")
+    ilerleme_yolu = os.path.join(args.output, "ilerleme.json")
 
-    with open(os.path.join(args.output, "etiketler.jsonl"), "w") as f:
-        for s in satirlar:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+    # Kaldigi yerden devam. ISLENEN sayisi tutuluyor, kabul edilen degil:
+    # elenenlerin kaydi yok, sadece etiketlere bakip atlasaydik reddedilen
+    # %55 her devamda bastan islenirdi.
+    basla = 0
+    if args.resume and os.path.exists(ilerleme_yolu):
+        with open(ilerleme_yolu) as f:
+            durum = json.load(f)
+        basla = int(durum.get("islenen", 0))
+        satirlar = _jsonl_oku(etiket_yolu)[:]
+        sebepler = dict(durum.get("sebepler", {}))
+        print(f"Devam: ilk {basla} ornek islenmisti, {len(satirlar)} kabul.",
+              flush=True)
+
+    kalan = [ann[k] for k in anahtarlar[basla:]]
+    ayar = {"data": args.data, "cell": args.cell, "colors": args.colors,
+            "canvas": args.canvas}
+    baslangic = time.time()
+
+    with open(etiket_yolu, "a" if basla else "w", buffering=1) as ef, \
+            _akis(kalan, ayar, args.jobs) as akis:
+        for j, (bn, t, kp, olcum) in enumerate(akis):
+            i = basla + j
+            if t is None:
+                sebepler[olcum.get("sebep", "?")] = sebepler.get(olcum.get("sebep", "?"), 0) + 1
+            else:
+                dosya = f"{bn}.png"
+                Image.fromarray(t).save(os.path.join(gorseller, dosya))
+                s = {"gorsel": f"gorseller/{dosya}", "kaynak": f"chen/{bn}",
+                     "artirma": "ham", "keypoints": kp, "olcum": olcum}
+                satirlar.append(s)
+                ef.write(json.dumps(s, ensure_ascii=False) + "\n")
+                if len(ornekler) < 24:
+                    ornekler.append((t, kp))
+
+            # ELENEN ornekten sonra da calismali: eskiden bu blok `continue`nin
+            # arkasindaydi, yani ilerleme ancak 50'ye bolunen ornek KABUL
+            # edildiginde basiliyordu — yaklasik iki seferde bir.
+            if (i + 1) % 50 == 0:
+                gecen = time.time() - baslangic
+                kalan_sn = gecen / (j + 1) * (len(kalan) - j - 1)
+                # flush sart: cikti dosyaya yonlendirilince print blok tamponlu
+                # olur ve ilerleme ancak kosu bitince gorunur.
+                print(f"  {i+1}/{len(anahtarlar)} islendi, {len(satirlar)} kabul "
+                      f"(%{100*len(satirlar)/(i+1):.0f})  "
+                      f"{gecen/(j+1):.2f}s/ornek  kalan ~{kalan_sn/60:.0f}dk",
+                      flush=True)
+                with open(ilerleme_yolu, "w") as pf:
+                    json.dump({"islenen": i + 1, "sebepler": sebepler}, pf)
 
     n = len(anahtarlar)
     print(f"\n{len(satirlar)}/{n} kabul edildi (%{100*len(satirlar)/max(n,1):.0f})")

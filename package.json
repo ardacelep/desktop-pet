@@ -7,6 +7,7 @@
     "start": "electron .",
     "tools": "python3 tools/menu.py",
     "skeleton": "python3 tools/skeleton_edit.py",
+    "onizle": "python3 tools/veri_onizle.py",
     "check": "node tools/check-characters.js",
     "check:hittest": "PET_SELFTEST=1 electron .",
     "check:bubble": "PET_SELFTEST=bubble electron .",
