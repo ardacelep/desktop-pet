@@ -1,0 +1,33 @@
+{
+  "displayName": "Deneme",
+  "nativeFrameSize": 86,
+  "displayScale": 1.0,
+  "idle": {
+    "file": "idle_spritesheet.png",
+    "frameSize": 86,
+    "frameCount": 4,
+    "frameDuration": 500
+  },
+  "walk_right": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 86,
+    "frameCount": 6,
+    "frameDuration": 120
+  },
+  "walk_left": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 86,
+    "frameCount": 6,
+    "frameDuration": 120,
+    "flip": true
+  },
+  "walkSpeed": 42,
+  "lines": [
+    "Selam!",
+    "Bugün nasılsın?",
+    "Bir mola versene.",
+    "Su içmeyi unutma.",
+    "Buradayım, merak etme.",
+    "Beni sürükleyebilirsin!"
+  ]
+}
