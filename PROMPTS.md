@@ -492,25 +492,58 @@ Dördünde genişlik **0.70-0.86**'ya düşüyor, yükseklik değişmiyor. Yani 
 
 faküs istisna, ve nedeni öğretici: onun "yandan" karesi gerçek bir profil değil, dörtte üç görünüş. Kabul edilebilir bir sonuç ama ölçüt olarak alınmamalı.
 
-Kontrol tek komut:
+### Tek kare değil, iki kare birlikte isteyin
 
-```bash
-python3 tools/skeleton.py sag_native.png --overlay kontrol.png
-```
+İlk denemede yandan görünüş **ayrı bir üretim** olarak istendi ve sonuç görsel olarak çok iyiydi — profil doğru, kimlik korunmuş, siluet tek parça. Ama ölçünce ölçek kaymıştı:
 
-Omuzlar üst üste bindiği için `RIGHT SHOULDER` ile `LEFT SHOULDER` arasındaki X farkı önden görünüşün çok altında kalmalı.
+| | önden | yandan | değişim |
+| --- | --- | --- | --- |
+| toplam boy | 85px | 95px | +%12 |
+| kafa yüksekliği | 36px | 46px | +%28 |
+| kafa / gövde oranı | %42 | %48 | +6 puan |
+
+Gerçek karakterlerimizde bu oran önden-yandan arasında ~2 puan içinde kalıyor (ael %30→%31, mag %37→%38, g1 %41→%39). Altı puan onların üç katı.
+
+Bu kurtarılamaz bir kusur: `meta.json` karakter başına tek `nativeFrameSize` tutuyor, yani idle ile walk aynı ölçekte olmak zorunda. Tüm sprite'ı küçültmek piksel sanatını bozar, kafayı ayrı küçültmek rötuş değil yeniden çizimdir.
+
+Sebep [Düzen bölümünde](#düzen-ızgara-tek-sıra-değil) zaten yazılı olan şey: her üretim karakteri biraz farklı ölçekte çiziyor. Çare de aynı — **iki görünüşü tek görselde istemek.** "Tüm görsel tek piksel ızgarasında çizilsin" kuralı devreye girince tek bir çizim iki farklı ölçek taşıyamıyor.
+
+Düzen 2×2: üst sol önden, üst sağ yandan, alt satır boş (filigran oraya düşsün). Önden kare bir **ölçek çıpası**; işiniz bitince atarsınız, ama üretim sırasında modeli tek ölçeğe bağlayan şey odur.
 
 ### Prompt
 
 ```
-Sana ÖNDEN görünen bir pixel art karakter veriyorum. Aynı karakteri, gövdesi ve
-kafası SAĞA bakacak şekilde yeniden çiz.
+Sana ÖNDEN görünen bir pixel art karakter veriyorum. Aynı karakteri İKİ
+görünüşte, TEK görselde, 2x2 ızgara halinde çiz.
 
-BU BİR KOPYALAMA İŞİ DEĞİL
-Çıktı referansla aynı olmayacak. Karakterin KİMLİĞİ birebir korunacak ama
-GÖRÜŞ AÇISI değişecek. Referansı olduğu gibi geri verme.
+YERLEŞİM
+- Kare canvas (1:1), olabilecek en yüksek çözünürlükte.
+- 2 satır x 2 sütun ızgara.
+  · SOL ÜST  = karakterin ÖNDEN görünüşü (referanstakinin aynısı)
+  · SAĞ ÜST  = aynı karakterin SAĞA bakan görünüşü
+  · ALT SATIRIN İKİ HÜCRESİ DE TAMAMEN BOŞ — oraya hiçbir şey çizme
+- İki kare arasında ve ızgaranın dışında, karaktere ait hiçbir pikselin
+  bulunmadığı boş şeritler bırak. Şerit genişliği bir karenin en az onda biri
+  kadar olsun.
+- Karakterin hiçbir pikseli tuvalin dış kenarına DEĞMESİN.
+- Çerçeve, ayırıcı çizgi, kare numarası, etiket ya da yazı EKLEME.
 
-SAĞA BAKIYOR NE DEMEK — hepsini tek tek uygula
+ÖLÇEK — EN KRİTİK MADDE
+- İki karedeki karakter BİREBİR aynı ölçekte olsun.
+- Kafa yüksekliği, gövde uzunluğu, bacak uzunluğu, gözlük boyutu: ikisinde de
+  AYNI sayıda piksel.
+- Kafa/gövde oranı iki karede aynı kalsın — profilde kafayı büyütme.
+- İki karakterin ayakları AYNI yatay çizgiye otursun, kafa üstleri de aynı
+  hizada olsun.
+- Tüm görsel TEK bir piksel ızgarasında çizilsin; bir karedeki piksel bloğu ile
+  diğerindeki aynı boyutta olmalı.
+
+SOL ÜST KARE — ÖNDEN
+- Referanstaki karakteri olduğu gibi çiz: aynı duruş, aynı ölçek, aynı palet.
+
+SAĞ ÜST KARE — SAĞA BAKAN
+Bu bir kopyalama işi DEĞİL. Kimlik birebir korunacak ama GÖRÜŞ AÇISI değişecek.
+Aşağıdakilerin hepsini tek tek uygula:
 - Yüz profilden görünsün: yalnızca TEK göz görünür (sağdaki), diğer göz kafanın
   arkasında kalır.
 - Burun silüetin SAĞ kenarından dışarı çıksın.
@@ -520,34 +553,18 @@ SAĞA BAKIYOR NE DEMEK — hepsini tek tek uygula
   gövdenin solundan az bir kısmı görünsün.
 - Ayaklar SAĞA doğru dönük olsun; ayak uçları sağı göstersin.
 - Karakter sağa YÜRÜMESİN — ayakta, nötr duruşta, iki ayak yere basıyor.
-
-SİLÜET — ÖLÇÜLEBİLİR KONTROL
-- Profil görünüşte gövde daralır: silüetin genişliği önden görünüşün yaklaşık
-  %70-85'i kadar olsun.
-- Yükseklik DEĞİŞMESİN: kafa üstünden ayak tabanına kadar olan piksel sayısı
-  referanstakiyle AYNI kalsın.
-- Bu ikisi birlikte önemli: genişlik düşmediyse döndürme olmamış demektir,
-  yükseklik değiştiyse ölçek kaymış demektir.
+- Silüetin GENİŞLİĞİ soldaki karenin yaklaşık %70-85'i kadar olsun (profilde
+  gövde daralır). YÜKSEKLİK ise birebir aynı kalsın.
 
 KİMLİK — BİREBİR TAŞINACAK
 - Saç rengi ve modeli, yüz hatları, gözlük, sakal/bıyık, kıyafet, ayakkabı,
-  aksesuarlar, renk paleti: hepsi referanstakiyle aynı.
+  aksesuarlar, renk paleti: iki karede de referanstakiyle aynı.
 - Profilden görünmeyen detayı UYDURMA; referansta ne varsa onu yandan çiz.
-- Karakterin vücut oranını değiştirme: kafa/gövde/bacak oranları aynı kalsın.
+- Karakterin vücut oranını değiştirme.
 
-ÖLÇEK — EN KRİTİK TEKNİK MADDE
-- Karakterin piksel bloğu referanstakiyle AYNI boyutta olsun.
-- Kafa yüksekliği, gövde uzunluğu, bacak uzunluğu referanstakiyle aynı sayıda
-  piksel olsun. Karakteri büyütme, küçültme, yakınlaştırma.
-
-YERLEŞİM
-- Kare canvas (1:1), olabilecek en yüksek çözünürlükte.
-- Karakteri canvas'ın SOL yarısına yerleştir; sağ alt bölge tamamen boş kalsın.
-- Karakterin hiçbir pikseli tuvalin dış kenarına DEĞMESİN; her kenarda en az
-  bir dama karesi kadar pay bırak.
-- Çerçeve, kenarlık, başlık, etiket, yazı, renk paleti şeridi EKLEME.
-- Yer gölgesi, zemin çizgisi, platform, yansıma ÇİZME.
-- Karakterden KOPUK hiçbir parça olmasın; silüet tek parça olsun.
+GÖRSELDE BULUNMAYACAKLAR
+- Yer gölgesi, zemin çizgisi, platform, yansıma.
+- Karakterden KOPUK hiçbir parça olmasın; her iki silüet de tek parça olsun.
 
 ARKA PLAN — DAMA DESENİ
 - Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri TAM
@@ -575,16 +592,36 @@ ARKA PLAN — DAMA DESENİ
 ya da keskinleştirme filtresi uygulama.
 ```
 
-### Gelen dosyada kontrol edilecekler
+### Gelen dosyayı işleme
 
-Diğer bölümlerdeki [kabul kriterinin](#kabul-kriteri-önce-ölç-sonra-düzenle) hepsi burada da geçerli. Ek olarak, sırayla:
+Önce native'e indirin, sonra iki kareyi ayırın:
 
-1. **Gerçekten döndü mü?** Genişlik oranı 0.70-0.86 aralığında mı. 1'e yakınsa model dönmemiştir, yeniden ürettirin.
-2. **Yükseklik aynı mı?** Değiştiyse ölçek kaymıştır ve araçlar düzeltemez — `meta.json`'daki `nativeFrameSize` idle ile walk arasında aynı olmak zorunda.
-3. **Tek göz mü?** İki göz görünüyorsa dörtte üç görünüş üretmiştir. Kullanılabilir ama walk sheet'inde tutarsızlık yaratır.
-4. **Kimlik sızdı mı?** Saç rengi, gözlük, kıyafet referanstakiyle aynı mı.
+```bash
+python3 tools/pixelart_extract.py iki_gorunus.png native.png --verbose
+python3 tools/split_sheet.py native.png -o kareler/ --rows 2 --cols 2
+```
 
-Sonra bu çıktıyı 3. bölümdeki prompt'a **(B) KARAKTER REFERANSI** olarak verin. Artık model yalnızca poz vermekle uğraşacak, döndürmeyle değil.
+Alt satır boş olduğu için `split_sheet` iki kare çıkarır: `kare_00` önden, `kare_01` yandan. Filigran alt satıra düştüyse üç kare çıkar; fazladan olanı silin.
+
+### Kontrol listesi
+
+Diğer bölümlerdeki [kabul kriterinin](#kabul-kriteri-önce-ölç-sonra-düzenle) hepsi burada da geçerli. Ek olarak, **iki kareyi birbirine karşı** ölçün:
+
+1. **Yükseklikler eşit mi?** İki karenin siluet yüksekliği aynı piksel sayısında olmalı. Değilse ızgara kuralı tutmamış demektir — yeniden ürettirin, çünkü araçlar ölçek farkını düzeltemez.
+2. **Gerçekten döndü mü?** Sağdaki karenin genişliği soldakinin 0.70-0.86'sı kadar mı. 1'e yakınsa model dönmemiştir.
+3. **Kafa oranı korunmuş mu?** İki karede kafa/gövde oranı 2 puandan fazla ayrılmamalı. Profilde kafa büyürse chibi oranı kayar.
+4. **Tek göz mü?** İki göz görünüyorsa dörtte üç görünüş üretmiştir. Kullanılabilir ama walk sheet'inde tutarsızlık yaratır.
+5. **Kimlik sızdı mı?** Saç rengi, gözlük, kıyafet iki karede de referanstakiyle aynı mı.
+
+Dördüncü madde için hızlı bir kontrol:
+
+```bash
+python3 tools/skeleton.py kareler/kare_01.png --overlay kontrol.png
+```
+
+Yandan karede `RIGHT SHOULDER` ile `LEFT SHOULDER` arasındaki X farkı, önden karede ölçülenin çok altında kalmalı — omuzlar üst üste bindiği için.
+
+Sonra **sağdaki kareyi** 3. bölümdeki prompt'a **(B) KARAKTER REFERANSI** olarak verin. Soldaki kare işini bitirmiştir; ölçek çıpası olarak görevini üretim sırasında yaptı. Artık model yalnızca poz vermekle uğraşacak, döndürmeyle değil.
 
 ## Kabul kriteri: önce ölç, sonra düzenle
 
