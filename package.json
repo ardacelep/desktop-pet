@@ -10,7 +10,7 @@
     "check": "node tools/check-characters.js",
     "check:hittest": "PET_SELFTEST=1 electron .",
     "check:bubble": "PET_SELFTEST=bubble electron .",
-    "test:tools": "python3 tools/test_pixelart_extract.py && python3 tools/test_split_sheet.py && python3 tools/test_pack_sheet.py && python3 tools/test_grid_ref.py && python3 tools/test_skeleton.py && python3 tools/test_pose_dataset.py",
+    "test:tools": "python3 tools/test_pixelart_extract.py && python3 tools/test_split_sheet.py && python3 tools/test_pack_sheet.py && python3 tools/test_grid_ref.py && python3 tools/test_skeleton.py && python3 tools/test_pose_dataset.py && python3 tools/test_veri_kapilari.py",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win"

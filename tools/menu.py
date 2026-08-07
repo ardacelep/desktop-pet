@@ -475,7 +475,7 @@ def adim_test() -> None:
     print("\n— Araç testleri —")
     for dosya in ("test_pixelart_extract.py", "test_split_sheet.py",
                   "test_pack_sheet.py", "test_grid_ref.py", "test_skeleton.py",
-                  "test_pose_dataset.py"):
+                  "test_pose_dataset.py", "test_veri_kapilari.py"):
         if not arac(dosya):
             print(f"\n✗ {dosya} başarısız.")
             return
