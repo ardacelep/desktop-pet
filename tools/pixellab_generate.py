@@ -62,10 +62,39 @@ GOLGE = ["flat shading", "basic shading", "medium shading", "detailed shading"]
 AYRINTI = ["low detail", "medium detail", "highly detailed"]
 
 
-def istem(rng: np.random.Generator) -> tuple[str, dict]:
-    """Bir karakter tarifi ve stil kollari uretir."""
-    tarif = (f"full body pixel art character, {rng.choice(GOVDE)}, "
-             f"{rng.choice(KIYAFET)}, {rng.choice(SAC)}, "
+# HEDEFLI havuz. Olculdu: hata ortalamasi tek bir karakterin omzunda —
+# faküs 6.47px, digerleri 2.92-3.87. faküs'un tarzi egitim dagiliminda
+# temsil edilmiyor ve onu ayirt eden ozellikler tam da tespiti zorlastiran
+# seyler:
+#   - uzun/ince govde (en az chibi olan)
+#   - omuzlara inen uzun sac  -> boyun cukurunu yok ediyor
+#   - bol paca / akiskan kiyafet -> bacaklar siluette birlesiyor
+#   - koyu goz -> sclera sinyali yok
+# Genel karakter almak yerine bu bolgeyi doldurmak daha verimli olmali.
+ZOR_GOVDE = ["tall slim adult", "very tall lanky adult", "tall thin teenager",
+             "slender tall adult with long limbs"]
+ZOR_KIYAFET = ["long flowing black robe reaching the floor",
+               "wide-leg baggy trousers and sleeveless top",
+               "long dress covering the legs",
+               "oversized coat reaching the knees",
+               "wide palazzo pants and tank top",
+               "long cloak covering the shoulders"]
+ZOR_SAC = ["very long hair covering the shoulders",
+           "long wavy hair down to the waist",
+           "long straight hair over both shoulders",
+           "hooded head with hair covering the neck"]
+
+
+def istem(rng: np.random.Generator, odak: str = "genel") -> tuple[str, dict]:
+    """Bir karakter tarifi ve stil kollari uretir.
+
+    `odak='zor'` dagilimin eksik kalan bolgesini hedefler (bkz. ZOR_* )."""
+    if odak == "zor":
+        govde, kiyafet, sac = ZOR_GOVDE, ZOR_KIYAFET, ZOR_SAC
+    else:
+        govde, kiyafet, sac = GOVDE, KIYAFET, SAC
+    tarif = (f"full body pixel art character, {rng.choice(govde)}, "
+             f"{rng.choice(kiyafet)}, {rng.choice(sac)}, "
              "standing straight, arms down at sides, facing viewer, "
              "full body visible from head to feet")
     return tarif, {"outline": str(rng.choice(KONTUR)),
@@ -125,6 +154,9 @@ def main(argv=None):
     p.add_argument("--canvas", type=int, default=128, choices=(64, 128))
     p.add_argument("--augment", type=int, default=6)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--focus", choices=("genel", "zor"), default="genel",
+                   help="zor = dagilimin eksik bolgesi (uzun/ince govde, uzun "
+                        "sac, bol paca) — faküs benzeri tarzlar")
     p.add_argument("--dry-run", action="store_true", help="Maliyeti soyle, uretme")
     args = p.parse_args(argv)
 
@@ -147,7 +179,7 @@ def main(argv=None):
     rng = np.random.default_rng(args.seed)
     satirlar, elenen = [], {}
     for i in range(args.count):
-        tarif, stil = istem(rng)
+        tarif, stil = istem(rng, args.focus)
         ham = uret(gizli, tarif, stil, args.canvas, int(rng.integers(1, 2**31)))
         if ham is None:
             elenen["uretim"] = elenen.get("uretim", 0) + 1
@@ -181,7 +213,7 @@ def main(argv=None):
             # dusuyor ve bolmede ayni "karakter" hem egitime hem teste
             # girebiliyordu.
             satirlar.append({"gorsel": f"gorseller/{dosya}",
-                             "kaynak": f"uretim/s{args.seed}_{i:04d}",
+                             "kaynak": f"uretim/{args.focus[0]}{args.seed}_{i:04d}",
                              "artirma": ad,
                              "keypoints": k, "tarif": tarif, "stil": stil})
         print(f"  [{i+1}/{args.count}] ok  ({len(ornekler)} ornek)  {tarif[:58]}…")
