@@ -175,8 +175,14 @@ def main(argv=None):
         for ad, t, k in ornekler:
             dosya = f"{pdset._hash(t)}.png"
             Image.fromarray(t).save(os.path.join(gorseller, dosya))
+            # `kaynak` KOSUYA OZGU olmali: karakter bazinda bolme buna
+            # dayaniyor. Yalnizca sirayla numaralandirmak yetmiyordu — ikinci
+            # parti de 0000'dan basladigi icin farkli karakterler ayni kimlige
+            # dusuyor ve bolmede ayni "karakter" hem egitime hem teste
+            # girebiliyordu.
             satirlar.append({"gorsel": f"gorseller/{dosya}",
-                             "kaynak": f"uretim/{i:04d}", "artirma": ad,
+                             "kaynak": f"uretim/s{args.seed}_{i:04d}",
+                             "artirma": ad,
                              "keypoints": k, "tarif": tarif, "stil": stil})
         print(f"  [{i+1}/{args.count}] ok  ({len(ornekler)} ornek)  {tarif[:58]}…")
 
