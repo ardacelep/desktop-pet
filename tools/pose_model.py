@@ -251,9 +251,13 @@ def hata_px(model, kume, dev, tuval, parti=16):
 
 
 def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
-         derinlik=3):
+         derinlik=3, tohum=0):
     torch = _torch()
     import torch.nn.functional as F
+
+    # SimCC basliklari rastgele ilklendiriliyor; tohumsuz kosuda ayni ayarin
+    # iki kosusu farkli sonuc verir ve iki AYARI karsilastirmak imkansizlasir.
+    torch.manual_seed(tohum)
 
     satirlar = veri_oku(kok)
     egitim = [s for s in satirlar if s["kaynak"].split("/")[0] != holdout]
@@ -270,8 +274,8 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
     plan = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epok)
     print(f"Aygit: {dev}   parametre: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
 
-    rng = np.random.default_rng(0)
-    en_iyi = float("inf")
+    rng = np.random.default_rng(tohum)
+    en_iyi, son = float("inf"), float("nan")
     for e in range(epok):
         model.train()
         sira = rng.permutation(len(ke))
@@ -285,7 +289,7 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
             opt.zero_grad(); kayip.backward(); opt.step()
             kayip_top += float(kayip); adim += 1
         plan.step()
-        eh = hata_px(model, kt, dev, tuval)
+        eh = son = hata_px(model, kt, dev, tuval)
         th = hata_px(model, ke, dev, tuval) if e == epok - 1 else None
         isaret = ""
         if eh < en_iyi:
@@ -296,8 +300,13 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
         print(f"  epok {e+1:3d}/{epok}  kayip {kayip_top/max(adim,1):.4f}  "
               f"holdout hatasi {eh:6.2f}px" + (f"  egitim {th:.2f}px" if th else "")
               + f"  {time.time()-t0:.0f}s{isaret}")
-    print(f"\nEn iyi holdout hatasi: {en_iyi:.2f}px   model: {cikti}")
-    return en_iyi
+    # IKISI DE basiliyor. "En iyi" holdout uzerinde epok seciyor, yani test
+    # kumesine bakarak karar veriyor — iyimser tarafli. Iki AYARI
+    # karsilastirirken SON epogun hatasini kullan: kosinüs planı 16 epokta
+    # sifira indigi icin son epok yakinsamis bir noktadir ve tarafsizdir.
+    print(f"\nEn iyi holdout hatasi: {en_iyi:.2f}px   "
+          f"Son epok: {son:.2f}px   model: {cikti}")
+    return en_iyi, son
 
 
 def main(argv=None):
@@ -315,12 +324,16 @@ def main(argv=None):
                    help="Hangi ResNet katmani: 3=layer3 (8x8), 2=layer2 (16x16)")
     p.add_argument("--scratch", action="store_true",
                    help="On egitimli govde KULLANMA (karsilastirma icin)")
+    p.add_argument("--seed", type=int, default=0,
+                   help="Rastgelelik tohumu; ayni ayarin kosu-arasi "
+                        "dagilimini olcmek icin degistir")
     args = p.parse_args(argv)
 
     ckpt = args.ckpt or os.path.join(args.veri, "model.pt")
     if args.komut == "train":
         egit(args.veri, args.holdout, args.epochs, args.batch, args.lr,
-             ckpt, on_egitimli=not args.scratch, derinlik=args.depth)
+             ckpt, on_egitimli=not args.scratch, derinlik=args.depth,
+             tohum=args.seed)
     else:
         torch = _torch()
         d = torch.load(ckpt, map_location="cpu")
