@@ -1012,6 +1012,82 @@ def test_sheet_kareleri_kalinti_sanilmiyor():
           "boyut siniri kalintiyi da koruyor, olcut ise yaramiyor")
 
 
+def test_halo_yuksek_toleransta_karakteri_yemiyor():
+    """REGRESYON: halo `weak` maskesinde yayiliyor ve weak esigi tol'un 2.5 KATI.
+
+    Tolerans sistiginde weak kontrol disi buyuyup gercek renkleri kapsiyor.
+    Olculen gercek vaka: ayaklari tuvalin alt kenarina degen bir Gemini
+    ciktisinda kenar seridi kirlendi, tolerans 5 yerine 60 olculdu, weak 150'ye
+    cikti ve sacin uzakligi 103-136 oldugu icin halo saci yedi — sac bandinda
+    121/150 hucre yerine 81/150 kaldi. Konturu birakip altindaki dolguyu
+    siliyordu, yani gozle "sacin bir kismi seffaf olmus" gibi gorunuyordu.
+
+    "Ama kapali kontur haloyu durdurmaz miydi?" — HAYIR, olculdu: o gorselde
+    sacin cevresinde kontur VARDI, ama konturun kendi uzakligi 128-183 arasinda
+    ve %48'i weak'in ICINDE kaliyordu. Halo konturun yarisindan gecip arkasina
+    ulasiyor. Durduran sey konturun varligi degil, weak'in DISINDA kalmasi;
+    tolerans buyudukce her kontur gecirgenlesiyor.
+
+    Dogru toleransta halo zararsiz; kazandirdigi bir sey de yok (olculdu:
+    tol=5'te halo 0 ve 2 ayni sonucu veriyor). O yuzden varsayilani 0."""
+    h, w = 30, 30
+    small = np.zeros((h, w, 3), np.uint8)
+    small[:, :] = (183, 0, 166)                      # dama tonu, her yer arka plan
+    # KONTUR VAR ama halo onu durdurmuyor — gercek vakada olculen sey bu.
+    # Konturun kendi uzakligi 128-183 arasindaydi ve %48'i weak'in (150)
+    # ICINDE kaliyordu; yani kontur yarisindan geciyor. "Kapali kontur haloyu
+    # durdurur" sezgisi yanlis: durduran sey konturun VARLIGI degil, weak'in
+    # DISINDA kalmasi. Tolerans buyudukce weak buyuyor ve kontur geçirgenlesiyor.
+    small[10:20, 10:20] = (120, 60, 110)             # dolgu, uzaklik 63
+    small[9, 9:21] = small[20, 9:21] = (40, 20, 45)  # kontur, uzaklik 143 -> weak ICINDE
+    small[9:21, 9] = small[9:21, 20] = (40, 20, 45)
+
+    field = px.BackgroundToneField(small, [(183, 0, 166)])
+    check("halo testi: kontur weak'in icinde (gercek vakadaki gibi gecirgen)",
+          field.distance[9, 15] <= 60 * 2.5,
+          f"kontur uzakligi {field.distance[9, 15]}")
+    dolgu_uzaklik = int(field.distance[15, 15])
+    tol = 60
+    check("halo testi: dolgu weak'in icinde, strong'un disinda",
+          tol < dolgu_uzaklik <= tol * 2.5,
+          f"dolgu uzakligi {dolgu_uzaklik}, tol {tol}, weak {tol*2.5}")
+
+    sifir = px.background_to_alpha(small, field, tol=tol, halo_width=0)
+    iki = px.background_to_alpha(small, field, tol=tol, halo_width=2)
+    check("halo=0 dolguyu koruyor", (sifir[10:20, 10:20, 3] > 0).all(),
+          f"{(sifir[10:20,10:20,3]==0).sum()} dolgu pikseli silindi")
+    check("halo=2 yuksek toleransta dolguyu yiyor (kusur belgeleniyor)",
+          (iki[10:20, 10:20, 3] == 0).any(),
+          "halo artik zarar vermiyorsa bu test guncellenmeli")
+
+    import inspect
+    varsayilan = inspect.signature(px.background_to_alpha).parameters["halo_width"].default
+    check("halo_width varsayilani 0", varsayilan == 0, f"varsayilan {varsayilan}")
+
+
+def test_kirli_kenar_seridi_olculuyor():
+    """Tolerans kenar seridinden %95'lik dilimle olculuyor — yani seridin en
+    fazla %5'i karakter olabilir varsayimi. Karakter kenara degdiginde bu
+    varsayim cokuyor ve tolerans sessizce tavana yapisiyor. `kenar_kirliligi`
+    bunu olcup uyari basmayi mumkun kiliyor."""
+    h, w = 40, 40
+    temiz = np.zeros((h, w, 3), np.uint8)
+    temiz[:, :] = (183, 0, 166)
+    temiz[10:30, 10:30] = (50, 120, 60)              # kenara DEGMEYEN karakter
+    f1 = px.BackgroundToneField(temiz, [(183, 0, 166)])
+    check("temiz kenar: kirlilik ~0", px.kenar_kirliligi(f1) < 0.01,
+          f"%{100*px.kenar_kirliligi(f1):.1f}")
+
+    kirli = temiz.copy()
+    kirli[36:40, 10:30] = (50, 120, 60)              # alt kenara degen ayak
+    f2 = px.BackgroundToneField(kirli, [(183, 0, 166)])
+    check("kirli kenar: kirlilik %5'i asiyor", px.kenar_kirliligi(f2) > 0.05,
+          f"%{100*px.kenar_kirliligi(f2):.1f}")
+    check("kirli kenar toleransi sisiriyor",
+          px.estimate_background_tolerance(f2) > px.estimate_background_tolerance(f1),
+          f"{px.estimate_background_tolerance(f2)} vs {px.estimate_background_tolerance(f1)}")
+
+
 def test_gamut_query_is_exact():
     """within_gamut'un iki yolu (dogrudan yayin / RGB kupu) AYNI sonucu vermeli.
 
@@ -1132,6 +1208,8 @@ if __name__ == "__main__":
         test_elle_izgara_on_kontrolden_once,
         test_per_frame_gercek_alfayi_dogru_indirger,
         test_sheet_kareleri_kalinti_sanilmiyor,
+        test_halo_yuksek_toleransta_karakteri_yemiyor,
+        test_kirli_kenar_seridi_olculuyor,
         test_gamut_query_is_exact,
         test_high_cardinality_bounded,
         test_helpers,

@@ -900,6 +900,21 @@ def tone_cluster_edge(distance: np.ndarray, min_width: int = 8,
     return None
 
 
+def kenar_kirliligi(field: BackgroundToneField, ring: int = 3,
+                    esik: int = 20) -> float:
+    """Kenar seridinin ne kadari dama DEGIL. Tolerans olcumu bu seride dayaniyor.
+
+    Karakter tuvalin kenarina degdiginde serit kirleniyor ve tolerans sisiyor;
+    oran %5'i asinca %95'lik dilim de karakteri gormeye basliyor."""
+    if field.empty:
+        return 0.0
+    h, w = field.distance.shape
+    m = np.zeros((h, w), dtype=bool)
+    m[:ring, :] = m[-ring:, :] = True
+    m[:, :ring] = m[:, -ring:] = True
+    return float((field.distance[m] > esik).mean())
+
+
 def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
                                   margin: int = 3, low: int = 3, high: int = 60) -> int:
     """Arka planin kendi ton referansindan ne kadar saptigini OLCUP tolerans secer.
@@ -911,7 +926,15 @@ def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
 
     Olcum YEREL ton alanina gore yapilir. Global tonlara gore olculdugunde ton
     kaymasi gurultu sanilip tolerans sisiyordu (olculen bir gorselde 11'e cikip
-    karakterin acik renklerini riske atiyordu); yerel referansla ayni gorselde 4."""
+    karakterin acik renklerini riske atiyordu); yerel referansla ayni gorselde 4.
+
+    KIRLI KENAR SERIDI. Olcut %95'lik dilim, yani seridin en fazla %5'i karakter
+    olabilir varsayimi. Karakter tuvalin kenarina degdiginde bu varsayim
+    cokuyor ve tolerans sessizce tavana yapisiyor. Olculen vaka: ayaklari alt
+    kenara degen bir Gemini ciktisinda serit %90 dilimi 2.0 iken %95 dilimi
+    95.8'e firliyor ve tolerans 5 yerine 60 olculuyor. Sessiz kalmiyoruz —
+    `kirli_kenar` alanindan uyari basiliyor, cunku bunun caresi araçta degil
+    uretimde: karakterin kenara degmemesi gerekiyor."""
     if field.empty:
         return low
     h, w = field.distance.shape
@@ -932,7 +955,7 @@ def estimate_background_tolerance(field: BackgroundToneField, ring: int = 3,
 
 def background_to_alpha(small: np.ndarray, field: BackgroundToneField,
                         tol: int = 3, halo_tol_factor: float = 2.5,
-                        halo_width: int = 2) -> np.ndarray:
+                        halo_width: int = 0) -> np.ndarray:
     """Dama tonlarina yakin VE goruntu kenarina bagli pikselleri seffaf yapar.
 
     Iki kademeli esik:
@@ -950,6 +973,23 @@ def background_to_alpha(small: np.ndarray, field: BackgroundToneField,
     piksellerinin %98'i dama tonuyla BIREBIR ayni, en buyuk sapma 3. Ayrica hucre
     merkezinden mode ornekledigimiz icin anti-aliasing zaten disarida kaliyor —
     bu yuzden halo_width varsayilani 0. Konturda bulanik bir hale kalirsa 1 yapin.
+
+    HALO NEDEN 0 (bir sure 2 idi, olculerek geri alindi): halo `weak` maskesi
+    icinde yayiliyor ve `weak` esigi tol'un 2.5 KATI. Tolerans buyudugunde weak
+    kontrol disi buyuyor ve gercek renkleri kapsiyor. Olculen vaka: karakteri
+    tuvalin alt kenarina degen bir Gemini ciktisinda tolerans 5 yerine 60
+    olculdu (kenar seridine ayakkabi karisti), weak 150'ye cikti, sacin uzakligi
+    103-136 oldugu icin halo saci yedi — sac bandinda 121/150 hucre yerine
+    81/150 kaldi. Kontur duruyor ama altindaki dolgu siliniyordu.
+
+        tol=5,  halo=0 -> sac 121/150, dama kalintisi 13
+        tol=5,  halo=2 -> sac 121/150, kalinti 13     (dogru tol'da zararsiz)
+        tol=60, halo=0 -> sac 121/150, kalinti 14     (halo=0 KURTARIYOR)
+        tol=60, halo=2 -> sac  81/150, kalinti 14     (hasar)
+
+    Yani halo dogru toleransta hicbir sey kazandirmiyor, yanlis toleransta ise
+    tek basina zarar veriyor. Bulanik konturlu bir kaynakta gerekirse
+    --halo-width 1 ile acilabilir.
 
     BILINEN SINIR: karakterin uzerinde dama tonuna `tol` kadar yakin bir renk varsa
     ve o bolge kenara bagliysa, renk temelli hicbir yontem ikisini ayiramaz. Boyle
@@ -1751,7 +1791,7 @@ def izgarayi_referanstan_kur(arr: np.ndarray, nat_w: int, nat_h: int
 def extract(input_path: str, output_path: str, preview_path: str | None = None,
             preview_scale: int = 8, bg_tol: int | None = None, speck_size: int = 12,
             center_ratio: float = 0.5, debug_dir: str | None = None,
-            no_crop: bool = False, merge_colors: int = 0,
+            no_crop: bool = False, merge_colors: int = 0, halo_width: int = 0,
             cleanup: bool = True, verify: bool = False,
             fill_gaps: int = 0, period: float | None = None,
             per_frame: bool = False, like_ref: str | None = None,
@@ -1875,10 +1915,19 @@ def extract(input_path: str, output_path: str, preview_path: str | None = None,
                   file=sys.stderr)
         print("Dama tonlari:", ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in tones),
               f"(tolerans {tol}{'' if bg_tol is not None else ', olculerek secildi'})")
+        kirli = kenar_kirliligi(field)
+        if bg_tol is None and kirli > 0.05:
+            print(f"UYARI: kenar seridinin %{100*kirli:.0f}'i dama DEGIL — karakter "
+                  f"tuvalin kenarina degiyor olabilir. Tolerans bu seritten "
+                  f"olculdugu icin sisti ({tol}) ve karakterin koyu/ara tonlari "
+                  f"arka plan sanilabilir.\n"
+                  f"       Caresi uretimde: karakter kenara degmemeli. Bu dosyayi "
+                  f"kurtarmak icin --bg-tol ile daha dusuk bir deger verin.",
+                  file=sys.stderr)
         if field.drift > tol:
             log(f"  ton kaymasi: goruntu boyunca en fazla {field.drift} birim — "
                 f"satir/sutun basina yerel ton kullaniliyor")
-        rgba = background_to_alpha(small, field, tol=tol)
+        rgba = background_to_alpha(small, field, tol=tol, halo_width=halo_width)
         rgba = remove_background_remnants(rgba, field, tol)
 
     if verify:
@@ -1985,6 +2034,13 @@ def main(argv=None):
                         help="Dama rengi eslesme toleransi. Varsayilan: goruntunun kenar "
                              "seridinden OLCULEREK secilir. Arka planin bir kismi kaldiysa "
                              "artirin; karakterin acik renkleri yeniyorsa azaltin.")
+    parser.add_argument("--halo-width", type=int, default=0,
+                        help="Konturun damayla karistigi ara tonlari kac piksel "
+                             "geriye dogru temizlesin. Varsayilan 0: hucre "
+                             "merkezinden mode ornekledigimiz icin ara ton zaten "
+                             "disarida kaliyor. Konturda bulanik bir hale "
+                             "kalirsa 1 deneyin — ama tolerans yuksek olculdugu "
+                             "durumda bu ayar karakteri yiyebilir.")
     parser.add_argument("--speck-size", type=int, default=12,
                         help="Bu boyuta kadar olan kopuk lekeler/delikler temizlenir (varsayilan 12)")
     parser.add_argument("--center-ratio", type=float, default=0.5,
@@ -2035,7 +2091,8 @@ def main(argv=None):
     VERBOSE = args.verbose
     try:
         extract(args.input, args.output, args.preview, args.preview_scale,
-                bg_tol=args.bg_tol, speck_size=args.speck_size,
+                bg_tol=args.bg_tol, halo_width=args.halo_width,
+                speck_size=args.speck_size,
                 center_ratio=args.center_ratio, debug_dir=args.debug_dir,
                 no_crop=args.no_crop, merge_colors=args.merge_colors,
                 cleanup=not args.no_cleanup, verify=args.verify,
