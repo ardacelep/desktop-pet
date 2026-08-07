@@ -260,6 +260,8 @@ olduğu anlaşılsın.
 
 Sıfırdan walk cycle üretimi Gemini'de güvenilir değil: model ayna-simetrik pozları tutturamıyor, çoğu denemede aynı pozu tekrarlıyor. Çalışan yol, **pozu üretmeyi modelden almak** — animasyonu doğru olan hazır bir sheet'i poz referansı verip yalnızca karakteri değiştirtmek.
 
+Buradaki karakter referansını **sağa bakan** halde vermek işi kolaylaştırıyor: önden bir referans verirseniz modelden aynı anda hem döndürmesini hem poz vermesini istemiş olursunuz. Önce [5. bölümdeki](#5-karakteri-sağa-çevirme-önden--yandan) döndürme prompt'unu çalıştırın.
+
 ### Önce referansı ızgaraya çevirin
 
 Referansı **şerit** verip çıktıyı **ızgara** istemek ölçülebilir şekilde kötü sonuç veriyor: model aynı anda hem yeniden dizmek hem karakter değiştirmek zorunda kalıyor ve poza ayırdığı dikkat azalıyor — bir denemede alt satırdaki dört kare birbirinin neredeyse aynısı çıktı. Referansı zaten istediğiniz düzende verin, o yükü ortadan kaldırın:
@@ -462,6 +464,128 @@ büyütüp küçültme; sadece göğüs/omuz hattı kayacak.
 
 Tuzak şu: "nefes alma" belirsiz tarif edilirse Gemini nefes hissi yerine tüm karakteri büyütüp küçültüyor. Piksel cinsinden kesin talimat şart — hangi hattın kaç piksel kayacağı yazılmalı.
 
+## 5. Karakteri sağa çevirme (önden → yandan)
+
+Uygulama karakter başına iki sprite kümesi kullanıyor: önden `idle`, yandan `walk_right`. Sola yürüyüş ayrı dosya değil, `meta.json`'daki `"flip": true` ile aynadan üretiliyor. Yani gereken tek dönüşüm **önden → sağa bakan**.
+
+Bu adım [3. bölümü](#3-hazır-sheet-üzerinde-karakter-değiştirme-walk-için-önerilen-yol) da düzeltiyor. Orada karakter referansı olarak önden görünüm verilip sağa bakan yürüyüş kareleri isteniyor — yani modelden aynı anda hem döndürmesi hem poz vermesi bekleniyor. Önce sağa bakan tek bir referans üretip 3. bölüme onu vermek yükü ikiye bölüyor.
+
+### Bu prompt neden diğerlerinden farklı yazıldı
+
+Elimizde ölçülmüş kötü bir geçmiş var: Gemini'ye metinle poz tarif etmek üç turda da başarısız oldu, iki sheet arasındaki alfa IoU %100 çıktı — yani model hiçbir şey değiştirmeden referansı aynen geri verdi (bkz. `tools/rig_pose.py`). Başarısızlık biçimi hep aynı: **model çelişki görünce referansa sadakati seçiyor.**
+
+O yüzden burada "sağa çevir" demek yetmiyor. Prompt, "sağa bakıyor"un **gözle sayılabilir işaretlerini** listeliyor — tek göz, dışarı çıkan burun, üst üste binen omuzlar. Model bunları tek tek üretmek zorunda kalınca "hiçbir şey değiştirmeme" seçeneği kapanıyor.
+
+### Ölçülen kabul ölçütü: siluet ne kadar daralmalı
+
+Beş karakterimizin önden ve yandan karelerinden ölçüldü:
+
+| Karakter | Önden | Yandan | Genişlik oranı | Yükseklik oranı |
+| --- | --- | --- | --- | --- |
+| mag | 40×83 | 28×87 | 0.70 | 1.05 |
+| g1 | 39×85 | 28×87 | 0.72 | 1.02 |
+| ael | 38×84 | 28×87 | 0.74 | 1.04 |
+| omerhan | 36×85 | 31×90 | 0.86 | 1.06 |
+| faküs | 37×91 | 38×91 | **1.03** | 1.00 |
+
+Dördünde genişlik **0.70-0.86**'ya düşüyor, yükseklik değişmiyor. Yani gelen dosyada genişlik oranı 1'e yakınsa model muhtemelen döndürmemiştir — ölçüp geri göndermek gerekir.
+
+faküs istisna, ve nedeni öğretici: onun "yandan" karesi gerçek bir profil değil, dörtte üç görünüş. Kabul edilebilir bir sonuç ama ölçüt olarak alınmamalı.
+
+Kontrol tek komut:
+
+```bash
+python3 tools/skeleton.py sag_native.png --overlay kontrol.png
+```
+
+Omuzlar üst üste bindiği için `RIGHT SHOULDER` ile `LEFT SHOULDER` arasındaki X farkı önden görünüşün çok altında kalmalı.
+
+### Prompt
+
+```
+Sana ÖNDEN görünen bir pixel art karakter veriyorum. Aynı karakteri, gövdesi ve
+kafası SAĞA bakacak şekilde yeniden çiz.
+
+BU BİR KOPYALAMA İŞİ DEĞİL
+Çıktı referansla aynı olmayacak. Karakterin KİMLİĞİ birebir korunacak ama
+GÖRÜŞ AÇISI değişecek. Referansı olduğu gibi geri verme.
+
+SAĞA BAKIYOR NE DEMEK — hepsini tek tek uygula
+- Yüz profilden görünsün: yalnızca TEK göz görünür (sağdaki), diğer göz kafanın
+  arkasında kalır.
+- Burun silüetin SAĞ kenarından dışarı çıksın.
+- Kulak kafanın SOL yarısında, tek başına görünsün.
+- Omuzlar üst üste binsin; iki omuz yan yana DEĞİL, biri diğerinin arkasında.
+- Uzaktaki kol (sol kol) gövdenin arkasında kalsın; ya hiç görünmesin ya da
+  gövdenin solundan az bir kısmı görünsün.
+- Ayaklar SAĞA doğru dönük olsun; ayak uçları sağı göstersin.
+- Karakter sağa YÜRÜMESİN — ayakta, nötr duruşta, iki ayak yere basıyor.
+
+SİLÜET — ÖLÇÜLEBİLİR KONTROL
+- Profil görünüşte gövde daralır: silüetin genişliği önden görünüşün yaklaşık
+  %70-85'i kadar olsun.
+- Yükseklik DEĞİŞMESİN: kafa üstünden ayak tabanına kadar olan piksel sayısı
+  referanstakiyle AYNI kalsın.
+- Bu ikisi birlikte önemli: genişlik düşmediyse döndürme olmamış demektir,
+  yükseklik değiştiyse ölçek kaymış demektir.
+
+KİMLİK — BİREBİR TAŞINACAK
+- Saç rengi ve modeli, yüz hatları, gözlük, sakal/bıyık, kıyafet, ayakkabı,
+  aksesuarlar, renk paleti: hepsi referanstakiyle aynı.
+- Profilden görünmeyen detayı UYDURMA; referansta ne varsa onu yandan çiz.
+- Karakterin vücut oranını değiştirme: kafa/gövde/bacak oranları aynı kalsın.
+
+ÖLÇEK — EN KRİTİK TEKNİK MADDE
+- Karakterin piksel bloğu referanstakiyle AYNI boyutta olsun.
+- Kafa yüksekliği, gövde uzunluğu, bacak uzunluğu referanstakiyle aynı sayıda
+  piksel olsun. Karakteri büyütme, küçültme, yakınlaştırma.
+
+YERLEŞİM
+- Kare canvas (1:1), olabilecek en yüksek çözünürlükte.
+- Karakteri canvas'ın SOL yarısına yerleştir; sağ alt bölge tamamen boş kalsın.
+- Karakterin hiçbir pikseli tuvalin dış kenarına DEĞMESİN; her kenarda en az
+  bir dama karesi kadar pay bırak.
+- Çerçeve, kenarlık, başlık, etiket, yazı, renk paleti şeridi EKLEME.
+- Yer gölgesi, zemin çizgisi, platform, yansıma ÇİZME.
+- Karakterden KOPUK hiçbir parça olmasın; silüet tek parça olsun.
+
+ARKA PLAN — DAMA DESENİ
+- Şeffaflığı göstermek için dama (checkerboard) deseni kullan; renkleri TAM
+  OLARAK #FF00FF ve #C000C0 olsun.
+- Bu iki magenta tonu karakterin HİÇBİR yerinde kullanılmamalı.
+- DAMA SENİN CETVELİN: bir dama karesi TAM OLARAK 8 karakter pikseli
+  genişliğindedir. Karakterin her piksel bloğu bu ızgaraya oturmalı — blok
+  kenarları dama karelerinin kenarlarıyla hizalı olsun. Karakteri damadan
+  bağımsız, serbest elle çizme.
+- Dama tüm görsel boyunca AYNI iki renkte kalsın: gradyan, gölge, vinyet ya da
+  renk kayması EKLEME.
+
+ÇİZİM KURALLARI
+- Gerçek pixel art: her piksel bloğu TEK düz renk, kenarları keskin.
+- Anti-aliasing, yumuşak geçiş, gradyan, bulanıklık, yumuşak gölge ya da yarı
+  saydam piksel YOK. Blok kenarlarında ara ton olmayacak.
+- Tüm görsel TEK bir piksel ızgarasında çizilsin; blok boyutu her yerde aynı.
+- Sınırlı palet (16-24 renk), net koyu kontur.
+- Uzaktaki kol ve bacağı biraz daha koyu tonda çiz ki hangi uzvun önde olduğu
+  anlaşılsın.
+- Kolla gövde arasında 1-2 piksellik minik boşluklar bırakma: kol ya gövdeye
+  değsin ya da arada en az 4 piksellik net açıklık olsun.
+
+Çıktıyı PNG olarak ver. JPEG'e çevirme, yeniden sıkıştırma, "enhance"/upscale
+ya da keskinleştirme filtresi uygulama.
+```
+
+### Gelen dosyada kontrol edilecekler
+
+Diğer bölümlerdeki [kabul kriterinin](#kabul-kriteri-önce-ölç-sonra-düzenle) hepsi burada da geçerli. Ek olarak, sırayla:
+
+1. **Gerçekten döndü mü?** Genişlik oranı 0.70-0.86 aralığında mı. 1'e yakınsa model dönmemiştir, yeniden ürettirin.
+2. **Yükseklik aynı mı?** Değiştiyse ölçek kaymıştır ve araçlar düzeltemez — `meta.json`'daki `nativeFrameSize` idle ile walk arasında aynı olmak zorunda.
+3. **Tek göz mü?** İki göz görünüyorsa dörtte üç görünüş üretmiştir. Kullanılabilir ama walk sheet'inde tutarsızlık yaratır.
+4. **Kimlik sızdı mı?** Saç rengi, gözlük, kıyafet referanstakiyle aynı mı.
+
+Sonra bu çıktıyı 3. bölümdeki prompt'a **(B) KARAKTER REFERANSI** olarak verin. Artık model yalnızca poz vermekle uğraşacak, döndürmeyle değil.
+
 ## Kabul kriteri: önce ölç, sonra düzenle
 
 **En önemli pratik kural bu.** Ölçüldü: aynı prompt ve aynı referansla yapılan iki üretimden biri 93.2 ızgara skoru aldı, diğeri 1.8. Prompt değişmedi, referans değişmedi — değişen sadece üretim kumasıydı. Yani hiçbir prompt bunu garanti etmiyor; **gelen dosyayı ölçüp kötüyse yeniden ürettirmek** en güvenilir yol.
@@ -483,7 +607,7 @@ python3 tools/pixelart_extract.py sheet.png native.png
 
 Yeniden ürettirmek saniyeler sürüyor; bozuk bir sheet'i kurtarmaya çalışmak saatler. Ölçülen bir vakada %17 uyumlu bir idle sheet'i hiçbir yöntemle temiz çıkmadı — `--period`, `--per-frame`, `--like-ref`, farklı örnekleme; hiçbiri kurtarmadı, çünkü karakterin kendisi piksel ızgarasına oturtulmamıştı.
 
-## 5. Üretim sonrası kontrol listesi
+## 6. Üretim sonrası kontrol listesi
 
 Pipeline'a sokmadan önce görsele bakıp şunları doğrulayın:
 
