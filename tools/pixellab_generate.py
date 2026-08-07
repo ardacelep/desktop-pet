@@ -23,8 +23,14 @@ CESITLILIK NASIL SAGLANIYOR
     orandi (mag'de 8/18 eklem, 11.4px), yani modelin genis bir oran araligi
     gormesi gerekiyor.
 
-    Poz SABIT: onden bakan, kollar yanda temel duruş. Poz cesitliligini
-    Chen'in verisi sagliyor; buradan istedigimiz sey tarz cesitliligi.
+    Duruş SABIT (ayakta, kollar yanda); poz cesitliligini Chen'in verisi
+    sagliyor, buradan istedigimiz sey tarz cesitliligi.
+
+    YON ise --view ile secilir. Ilk 195 karakterin tamami ondendi ve bu
+    olculebilir bir bosluk yaratti (dort holdout, Chen'li model):
+        onden  1.51px      YANDAN  4.06px   (faküs'te 6.97)
+    Uygulamanin walk_right sprite'i yandan oldugu icin bosluk dogrudan is
+    goruyor — o yuzden --view yandan ile ayrica veri toplaniyor.
 """
 from __future__ import annotations
 
@@ -97,29 +103,61 @@ ZOR_SAC = ["long straight hair past the shoulders",
            "shoulder-length hair with visible face"]
 
 
-def istem(rng: np.random.Generator, odak: str = "genel") -> tuple[str, dict]:
-    """Bir karakter tarifi ve stil kollari uretir.
+# Yon basina durus tarifi. YAN GORUNUS AYRI BIR MOD, cunku egitim verimizin
+# tamami ondendi ve olculdu (dort holdout, Chen'li model):
+#     onden (idle kareler)  1.51px
+#     YANDAN (walk kareler) 4.06px   — faküs'te 6.97
+# Yandan denetim yalnizca bes karakterin 40 ham karesinden geliyordu; 195
+# uretilen karakterin hepsi ondendi. Boru hatti yandan sprite'a dayandigi icin
+# (walk_right) bu bosluk dogrudan is gorur.
+# Yonu ASIL BELIRLEYEN sey API'nin `direction` parametresi, istem metni degil.
+# Uc nokta 8 yon kabul ediyor (north/north-east/east/.../north-west) ve biz
+# simdiye kadar hep "south" gonderiyorduk — yani tum verinin onden olmasi
+# istem metninden degil bu parametreden geliyordu.
+#
+# Sema `direction` icin "weakly guiding" diyor, o yuzden istem metni de ayni
+# seyi soyluyor; ikisi celisirse model ikisinin arasinda bir sey uretiyor.
+DURUS = {
+    "onden": ("south",
+              "standing straight, arms down at sides, facing the viewer, "
+              "face clearly visible, front view, "
+              "full body visible from head to feet"),
+    # Dondurme promptunda olculen sey burada da gecerli: profilin dogal
+    # sonucunu ayrica istemek modeli abartmaya itiyor (burun maddesi burnu
+    # buyutuyordu). O yuzden yuz ayrintisi tarif edilmiyor.
+    "yandan": ("east",
+               "standing straight, arms down at sides, "
+               "seen from the side in profile, side view, "
+               "full body visible from head to feet"),
+}
 
-    `odak='zor'` dagilimin eksik kalan bolgesini hedefler (bkz. ZOR_* )."""
+
+def istem(rng: np.random.Generator, odak: str = "genel",
+          yon: str = "onden") -> tuple[str, dict]:
+    """Bir karakter tarifi, stil kollari ve API yonu uretir.
+
+    `odak='zor'` dagilimin eksik kalan bolgesini hedefler (bkz. ZOR_* ).
+    `yon` durusu secer (bkz. DURUS)."""
     if odak == "zor":
         govde, kiyafet, sac = ZOR_GOVDE, ZOR_KIYAFET, ZOR_SAC
     else:
         govde, kiyafet, sac = GOVDE, KIYAFET, SAC
+    api_yon, durus = DURUS[yon]
     tarif = (f"full body pixel art character, {rng.choice(govde)}, "
-             f"{rng.choice(kiyafet)}, {rng.choice(sac)}, "
-             "standing straight, arms down at sides, facing the viewer, "
-             "face clearly visible, front view, "
-             "full body visible from head to feet")
+             f"{rng.choice(kiyafet)}, {rng.choice(sac)}, {durus}")
     return tarif, {"outline": str(rng.choice(KONTUR)),
                    "shading": str(rng.choice(GOLGE)),
-                   "detail": str(rng.choice(AYRINTI))}
+                   "detail": str(rng.choice(AYRINTI)),
+                   "direction": api_yon}
 
 
 def uret(gizli: str, tarif: str, stil: dict, boyut: int, tohum: int,
          deneme: int = 3) -> np.ndarray | None:
+    # `direction` artik `stil` icinden geliyor (bkz. istem/DURUS); burada
+    # sabitlemek yon secimini sessizce ezerdi.
     govde = {"description": tarif,
              "image_size": {"width": boyut, "height": boyut},
-             "view": "side", "direction": "south", "no_background": True,
+             "view": "side", "no_background": True,
              "seed": int(tohum), **stil}
     for i in range(deneme):
         try:
@@ -225,6 +263,9 @@ def main(argv=None):
     p.add_argument("--focus", choices=("genel", "zor"), default="genel",
                    help="zor = dagilimin eksik bolgesi (uzun/ince govde, uzun "
                         "sac, bol paca) — faküs benzeri tarzlar")
+    p.add_argument("--view", choices=tuple(DURUS), default="onden",
+                   help="Karakterin durusu. 'yandan' egitim verisindeki yan "
+                        "gorunus boslugunu kapatmak icin.")
     p.add_argument("--yuz-kapisi", action="store_true",
                    help="Yuzu gorunmeyen (sirti donuk/kapusonlu) figurleri de "
                         "ele. Olculdu: egitimi IYILESTIRMIYOR, o yuzden kapali.")
@@ -257,7 +298,7 @@ def main(argv=None):
     rng = np.random.default_rng(args.seed)
     satirlar, elenen = [], {}
     for i in range(args.count):
-        tarif, stil = istem(rng, args.focus)
+        tarif, stil = istem(rng, args.focus, args.view)
         ham = uret(gizli, tarif, stil, args.canvas, int(rng.integers(1, 2**31)))
         if ham is None:
             elenen["uretim"] = elenen.get("uretim", 0) + 1
@@ -291,7 +332,7 @@ def main(argv=None):
             # dusuyor ve bolmede ayni "karakter" hem egitime hem teste
             # girebiliyordu.
             s = {"gorsel": f"gorseller/{dosya}",
-                 "kaynak": f"uretim/{args.focus[0]}{args.seed}_{i:04d}",
+                 "kaynak": f"uretim/{args.view[0]}{args.focus[0]}{args.seed}_{i:04d}",
                  "artirma": ad,
                  "keypoints": k, "tarif": tarif, "stil": stil}
             satirlar.append(s)

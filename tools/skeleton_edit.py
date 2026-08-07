@@ -47,6 +47,65 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import skeleton as sk  # noqa: E402
 
 
+class _Tahminci:
+    """Iskeleti kim cikariyor: POZ MODELI, yoksa sezgisel algoritma.
+
+    Model varsayilan, cunku olculdu (dort holdout):
+        skeleton.py  gorulmemis karakterde 13.46px; yandan gorunuste kalcayi
+                     18.6px sasiriyor ve NECK>HIP iki bacak zincirinin de koku
+                     oldugu icin altindaki her sey kayiyor
+        poz modeli   onden 1.51px, yandan 4.06px
+
+    Sezgisel yol yine de duruyor: bagimliliksiz calisiyor ve checkpoint
+    bulunamadiginda tek secenek o. Hangisinin kullanildigi arayuze
+    bildiriliyor — kullanici neye baktigini bilmeli."""
+
+    def __init__(self, ckpt: str | None):
+        self.ad, self._model, self._dev, self._tuval = "sezgisel", None, None, 128
+        if not ckpt:
+            return
+        try:
+            import pose_model as pm
+            import torch
+            d = torch.load(ckpt, map_location="cpu")
+            self._model = pm.PozModeli(d["tuval"], len(sk.LABELS),
+                                       on_egitimli=False, derinlik=d["derinlik"])
+            self._model.load_state_dict(d["model"])
+            self._dev = pm.aygit()
+            self._model.to(self._dev).eval()
+            self._tuval, self._pm = d["tuval"], pm
+            self.ad = "model"
+        except Exception as err:                                  # noqa: BLE001
+            print(f"UYARI: poz modeli yuklenemedi ({err}); sezgisel tahminciye "
+                  f"dusuluyor.", file=sys.stderr)
+
+    def __call__(self, kare: np.ndarray, yon: str) -> sk.Iskelet:
+        if self._model is None:
+            return sk.estimate(kare, direction=yon)
+        import torch
+        import pose_dataset as pdset
+        # Model, egitimde gordugu tuvale gore calisiyor: kare ortalanip
+        # `tuval` boyutuna yerlestiriliyor. Donusum degerleri saklaniyor ki
+        # cikti KAREYE geri tasinabilsin.
+        tuval, olcek, dx, dy = pdset.kanvasa_yerlestir(kare, self._tuval)
+        # Girdi normalizasyonu pose_model.Kume ile BIREBIR ayni olmali.
+        rgb = np.where(tuval[:, :, 3:4] > 0, tuval[:, :, :3], 255).astype(np.float32) / 255.0
+        x = rgb.transpose(2, 0, 1)
+        ort = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
+        std = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
+        x = np.ascontiguousarray((x - ort) / std, dtype=np.float32)[None]
+        with torch.no_grad():
+            xl, yl = self._model(torch.from_numpy(x).to(self._dev))
+            px, py = self._pm.koordinat_coz(xl, yl, self._tuval)
+        p = torch.stack([px, py], -1).cpu().numpy()[0]
+        noktalar = {l: ((float(p[i][0]) - dx) / olcek, (float(p[i][1]) - dy) / olcek)
+                    for i, l in enumerate(sk.LABELS)}
+        # olculen/supheli sezgisel algoritmanin kavramlari; modelde karsiligi
+        # yok, o yuzden bos. Arayuz bunlari yalnizca renklendirmede kullaniyor.
+        return sk.Iskelet(noktalar=noktalar, z={}, olculen=frozenset(),
+                          supheli=frozenset())
+
+
 SAYFA = r"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8">
 <title>Iskelet duzenleyici</title>
@@ -366,10 +425,12 @@ def _png_datauri(a: np.ndarray) -> str:
 class Durum:
     """Sunucunun tuttugu tek oturumluk durum."""
 
-    def __init__(self, cikti: str | None, kutu: int | None):
+    def __init__(self, cikti: str | None, kutu: int | None,
+                 tahminci: "_Tahminci | None" = None):
         self.cikti = cikti
         self.kutu = kutu
         self.z: dict[str, float] = {}
+        self.tahminci = tahminci or _Tahminci(None)
 
     def cikti_yolu(self, ad: str, kare: int) -> str:
         if self.cikti:
@@ -426,7 +487,7 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
                 return
             kare, toplam = _kareyi_cikar(rgba, int(govde.get("kare", 0)), durum.kutu)
             try:
-                isk = sk.estimate(kare, direction=govde.get("yon", "south"))
+                isk = durum.tahminci(kare, govde.get("yon", "south"))
             except ValueError as err:
                 self._json(400, {"hata": str(err)})
                 return
@@ -490,6 +551,12 @@ def main(argv=None):
                    help="Cikti JSON. Verilmezse sprite adindan turetilir.")
     p.add_argument("--frame-size", type=int, default=None,
                    help="Kare kutusu (varsayilan: goruntu yuksekligi)")
+    p.add_argument("--model", default=None,
+                   help="Poz modeli checkpoint'i. Verilmezse VARSAYILAN "
+                        "aranir; o da yoksa sezgisel algoritmaya dusulur.")
+    p.add_argument("--sezgisel", action="store_true",
+                   help="Modeli hic kullanma. Olculdu: sezgisel tahminci "
+                        "gorulmemis karakterde 13.46px, model 1.51-4.06px.")
     p.add_argument("--port", type=int, default=0, help="0 = bos port secilir")
     p.add_argument("--no-open", action="store_true",
                    help="Tarayiciyi kendiliginden acma")
@@ -498,7 +565,16 @@ def main(argv=None):
     sayfa = (SAYFA
              .replace("__KEMIK__", json.dumps([list(k) for k in sk.KEMIKLER]))
              .replace("__LABELS__", json.dumps(list(sk.LABELS))))
-    _sunucu(sayfa, Durum(args.output, args.frame_size), args.port, not args.no_open)
+    kok_proje = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    varsayilan = os.path.join(kok_proje, "_data", "poz_modeli.pt")
+    ckpt = None if args.sezgisel else (args.model or
+                                       (varsayilan if os.path.exists(varsayilan) else None))
+    tahminci = _Tahminci(ckpt)
+    print(f"Iskelet tahmincisi: {tahminci.ad.upper()}"
+          + (f"  ({ckpt})" if tahminci.ad == "model" else
+             "  — poz modeli bulunamadi, sezgisel algoritma kullaniliyor"))
+    _sunucu(sayfa, Durum(args.output, args.frame_size, tahminci),
+            args.port, not args.no_open)
     return 0
 
 
