@@ -180,7 +180,7 @@ def kafa_ayrintisi(rgba: np.ndarray, tol: int = 24, en_az: int = 3) -> int:
     return n
 
 
-def kabul_edilebilir(rgba: np.ndarray) -> tuple[bool, str]:
+def kabul_edilebilir(rgba: np.ndarray, yuz_kapisi: bool = False) -> tuple[bool, str]:
     """Uretilen gorsel egitim verisi olmaya uygun mu?
 
     Uretim her zaman istedigimizi vermiyor: bazen karakter tuvale sigmiyor,
@@ -201,7 +201,14 @@ def kabul_edilebilir(rgba: np.ndarray) -> tuple[bool, str]:
     if boy < 0.45:
         return False, "figur kisa kalmis"
 
-    if kafa_ayrintisi(rgba) < KAFA_AYRINTI_ESIGI:
+    # YUZ KAPISI VARSAYILAN OLARAK KAPALI. Sirti donuk figurleri gercekten
+    # yakaliyor, ama olculdu (2026-08-07, dort holdout, son epok): kapiyi
+    # acinca 60->53 karakterde hata 4.35 -> 4.50px, 94->76'da 4.33 -> 4.37px.
+    # Yani iyilestirmiyor. Sebebi muhtemelen su: eledigi veri, gurultusunden
+    # daha degerli — veri miktarinin kazandirdigi olculmus bir sey
+    # (0/26/60 karakter -> 5.62/4.66/4.10px). Ustelik kapi uretimden SONRA
+    # calisiyor, yani ucret zaten odenmis oluyor.
+    if yuz_kapisi and kafa_ayrintisi(rgba) < KAFA_AYRINTI_ESIGI:
         return False, "yuz gorunmuyor"
     return True, ""
 
@@ -218,6 +225,9 @@ def main(argv=None):
     p.add_argument("--focus", choices=("genel", "zor"), default="genel",
                    help="zor = dagilimin eksik bolgesi (uzun/ince govde, uzun "
                         "sac, bol paca) — faküs benzeri tarzlar")
+    p.add_argument("--yuz-kapisi", action="store_true",
+                   help="Yuzu gorunmeyen (sirti donuk/kapusonlu) figurleri de "
+                        "ele. Olculdu: egitimi IYILESTIRMIYOR, o yuzden kapali.")
     p.add_argument("--dry-run", action="store_true", help="Maliyeti soyle, uretme")
     args = p.parse_args(argv)
 
@@ -245,7 +255,7 @@ def main(argv=None):
         if ham is None:
             elenen["uretim"] = elenen.get("uretim", 0) + 1
             continue
-        tamam, sebep = kabul_edilebilir(ham)
+        tamam, sebep = kabul_edilebilir(ham, args.yuz_kapisi)
         if not tamam:
             elenen[sebep] = elenen.get(sebep, 0) + 1
             print(f"  [{i+1}/{args.count}] elendi: {sebep}")

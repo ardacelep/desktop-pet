@@ -185,25 +185,31 @@ def yuzlu_figur(b=128):
 
 
 def test_yuz_gorunurlugu_kapisi():
-    """REGRESYON: uretim bazen sirti donuk / kapusonlu figur veriyor.
+    """Yuz kapisi CALISIYOR ama VARSAYILAN OLARAK KAPALI.
 
-    Cikarimda hep one bakan karakter kullanilacak, ve yuzu olmayan figurde
-    etiketleyicinin goz/burun/kulak icin dayanacagi sinyal yok — o etiketler
-    tahmin olur. Olculdu: ortme kelimeleri iceren istemler %38 yuz
-    gorunurlugu uretti (genel havuz %82).
+    Sirti donuk / kapusonlu figurleri gercekten ayirt ediyor: olcut kafadaki
+    IC AYRINTI sayisi — gercek bes karakterimizde 50-87, bozuk figurlerde 1-9.
+    ("sclera var mi" olcutu OLAMAZDI: faküs'un de sclera'si yok ve o tam da
+    tutmak istedigimiz karakter.)
 
-    Olcut "sclera var mi" OLAMAZ: faküs'un de sclera'si yok ve o tam da
-    tutmak istedigimiz karakter. Yerine kafadaki IC AYRINTI sayiliyor —
-    gercek bes karakterimizde 50-87, bozuk figurlerde 1-9."""
+    Ama kapali, cunku olculdu (dort holdout, son epok): kapiyi acmak
+    60->53 karakterde hatayi 4.35 -> 4.50px, 94->76'da 4.33 -> 4.37px yapti.
+    Yani eledigi veri gurultusunden daha degerli. Test ikisini birden
+    korumali — ayirt etme yetisini VE varsayilanin kapali oldugunu."""
     import pixellab_generate as pg
     b = 128
-    check("yuz kapisi: ayrintili kafa gecti", pg.kabul_edilebilir(yuzlu_figur(b))[0])
-
     duz = np.zeros((b, b, 4), np.uint8)       # kapusonlu/arkadan gorunum taklidi
     duz[10:118, 45:80, :3] = (60, 60, 70)
     duz[10:118, 45:80, 3] = 255
-    tamam, sebep = pg.kabul_edilebilir(duz)
-    check("yuz kapisi: duz kutle elendi", not tamam and sebep == "yuz gorunmuyor", sebep)
+
+    check("yuz kapisi: varsayilan KAPALI, duz kutle geciyor",
+          pg.kabul_edilebilir(duz)[0])
+
+    check("yuz kapisi acikken ayrintili kafa gecti",
+          pg.kabul_edilebilir(yuzlu_figur(b), yuz_kapisi=True)[0])
+    tamam, sebep = pg.kabul_edilebilir(duz, yuz_kapisi=True)
+    check("yuz kapisi acikken duz kutle elendi",
+          not tamam and sebep == "yuz gorunmuyor", sebep)
 
     check("yuz kapisi: ayrinti sayisi ayirt ediyor",
           pg.kafa_ayrintisi(yuzlu_figur(b)) > pg.KAFA_AYRINTI_ESIGI > pg.kafa_ayrintisi(duz),
