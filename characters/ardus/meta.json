@@ -1,0 +1,33 @@
+{
+  "displayName": "Ardüs",
+  "nativeFrameSize": 97,
+  "displayScale": 1.0,
+  "idle": {
+    "file": "idle_spritesheet.png",
+    "frameSize": 97,
+    "frameCount": 4,
+    "frameDuration": 500
+  },
+  "walk_right": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 97,
+    "frameCount": 6,
+    "frameDuration": 120
+  },
+  "walk_left": {
+    "file": "walk_right_spritesheet.png",
+    "frameSize": 97,
+    "frameCount": 6,
+    "frameDuration": 120,
+    "flip": true
+  },
+  "walkSpeed": 42,
+  "lines": [
+    "Naber!",
+    "Bugün nasılsın?",
+    "fiyuv fiyuv",
+    "acıktım",
+    "bacağım çıktı (yine)",
+    "spotify yemeği"
+  ]
+}
