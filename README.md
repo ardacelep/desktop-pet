@@ -31,6 +31,16 @@ npm install
 npm start
 ```
 
+### İskelet düzenleyiciyi kullanacaksanız: Git LFS
+
+Poz modeli (`models/poz_modeli.pt`, ~17 MB) **Git LFS** ile tutuluyor. LFS kurulu değilken klonlarsanız dosyanın yerinde birkaç yüz baytlık bir işaretçi bulunur ve `npm run skeleton` modeli yükleyemeyip sezgisel algoritmaya düşer — ölçüldü, o algoritma görülmemiş karakterde 13.46px, model 1.51–4.06px.
+
+```bash
+brew install git-lfs && git lfs install && git lfs pull
+```
+
+Model dosyası ikili ve her yeniden eğitimde değişiyor; LFS tam da bunun için var — depo geçmişi 34 MB'lık blob'larla şişmiyor. Düzenleyici modeli bulamazsa açılışta bunu yazar, sessizce kötü sonuç üretmez.
+
 ## Proje yapısı
 
 ```

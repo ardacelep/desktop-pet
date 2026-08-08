@@ -1,9 +1,9 @@
 # Metin dosyalarında satır sonlarını normalize et (Windows + macOS birlikte geliştirme)
 * text=auto eol=lf
-
 # Sprite sheet'ler ve ikonlar ikili dosya — diff/merge denenmesin
 *.png binary
 *.ico binary
 *.icns binary
 *.dmg binary
 *.exe binary
+models/*.pt filter=lfs diff=lfs merge=lfs -text

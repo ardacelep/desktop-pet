@@ -48,11 +48,17 @@ import skeleton as sk  # noqa: E402
 
 
 def en_guncel_model(kok: str) -> str | None:
-    """`_data/modeller/` icindeki en yeni URETIM modelini bulur.
+    """En yeni URETIM modelini bulur. IKI yere birden bakar.
 
-    Neden otomatik: model her veri turunda yeniden egitiliyor ve GUI'nin elle
-    guncellenen bir kopyaya bagli olmasi, kullanicinin farkinda olmadan eski
-    modelle calismasi demek.
+        models/          depoda, Git LFS ile gelir — KLONLAYANIN elindeki tek
+                         model burasidir
+        _data/modeller/  yerel egitim ciktisi; `_data/` gitignore'da, yani
+                         yalnizca burada egitim yapmis kiside bulunur
+
+    Ikisine birden bakmak sart: yalnizca `_data/` aransaydi klonlayan kisi
+    LFS ile modeli almis olmasina ragmen sezgisele duserdi. Yalnizca
+    `models/` aransaydi, yerel egitim yapan kisi taze modelini goremezdi.
+    Ikisinden EN YENISI seciliyor.
 
     Neden yalnizca URETIM modelleri: `_data/modeller/` icindeki digerleri
     OLCUM icin egitildi ve her biri bir karakteri disarida birakiyor
@@ -62,16 +68,23 @@ def en_guncel_model(kok: str) -> str | None:
     Uretim modeli yoksa None doner ve cagiran sezgisele duser; sessizce bir
     olcum modeline dusmek yanlis olurdu."""
     import glob
-    dizin = os.path.join(kok, "_data", "modeller")
     adaylar = []
-    for p in glob.glob(os.path.join(dizin, "*.pt")):
-        try:
-            import torch
-            k = torch.load(p, map_location="cpu").get("kunye") or {}
-        except Exception:                                          # noqa: BLE001
-            continue
-        if k.get("uretim"):
-            adaylar.append((k.get("tarih", ""), os.path.getmtime(p), p))
+    for dizin in (os.path.join(kok, "models"),
+                  os.path.join(kok, "_data", "modeller")):
+        for p in glob.glob(os.path.join(dizin, "*.pt")):
+            try:
+                import torch
+                k = torch.load(p, map_location="cpu").get("kunye") or {}
+            except Exception:                                      # noqa: BLE001
+                # LFS cekilmemisse dosya birkac yuz baytlik bir ISARETCI olur
+                # ve torch onu acamaz. Sessizce atlamak yanlis olurdu.
+                if os.path.getsize(p) < 4096:
+                    print(f"UYARI: {p} bir Git LFS isaretcisi — model henuz "
+                          f"indirilmemis. `git lfs pull` calistirin.",
+                          file=sys.stderr)
+                continue
+            if k.get("uretim"):
+                adaylar.append((k.get("tarih", ""), os.path.getmtime(p), p))
     return max(adaylar)[2] if adaylar else None
 
 
