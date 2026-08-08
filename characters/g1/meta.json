@@ -1,23 +1,23 @@
 {
   "displayName": "G1",
-  "nativeFrameSize": 87,
-  "displayScale": 1,
+  "nativeFrameSize": 86,
+  "displayScale": 1.0,
   "idle": {
     "file": "idle_spritesheet.png",
-    "frameSize": 87,
+    "frameSize": 86,
     "frameCount": 4,
     "frameDuration": 500
   },
   "walk_right": {
     "file": "walk_right_spritesheet.png",
-    "frameSize": 87,
-    "frameCount": 8,
+    "frameSize": 86,
+    "frameCount": 6,
     "frameDuration": 120
   },
   "walk_left": {
     "file": "walk_right_spritesheet.png",
-    "frameSize": 87,
-    "frameCount": 8,
+    "frameSize": 86,
+    "frameCount": 6,
     "frameDuration": 120,
     "flip": true
   },
