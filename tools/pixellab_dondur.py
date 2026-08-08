@@ -186,9 +186,11 @@ def main(argv=None):
             Image.fromarray(t).save(os.path.join(gorseller, dosya))
             ef.write(json.dumps({
                 "gorsel": f"gorseller/{dosya}",
-                # Kimlik KAYNAGI tasiyor: ayni karakterin onden ve yandan hali
-                # boldede AYRI karakter sayilmamali, yoksa biri egitime biri
-                # teste duser ve sahte yuksek skor cikar.
+                # Kimlik KAYNAK karakteri tasiyor ("uretim/k0000|yan"), yani
+                # hangi onden karakterden geldigi izlenebiliyor. Bolme ust
+                # gruba (ilk '/' oncesi) baktigi icin ikisi de "uretim" ve
+                # birlikte egitime giriyor — istenen bu. Bolme bir gun tam
+                # kaynaga gore yapilirsa bu esleme burada hazir duruyor.
                 "kaynak": f"{r['kaynak']}|yan",
                 "artirma": ad, "keypoints": k, "omuz_orani": oran,
             }, ensure_ascii=False) + "\n")

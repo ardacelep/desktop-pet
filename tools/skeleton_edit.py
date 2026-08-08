@@ -47,6 +47,34 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import skeleton as sk  # noqa: E402
 
 
+def en_guncel_model(kok: str) -> str | None:
+    """`_data/modeller/` icindeki en yeni URETIM modelini bulur.
+
+    Neden otomatik: model her veri turunda yeniden egitiliyor ve GUI'nin elle
+    guncellenen bir kopyaya bagli olmasi, kullanicinin farkinda olmadan eski
+    modelle calismasi demek.
+
+    Neden yalnizca URETIM modelleri: `_data/modeller/` icindeki digerleri
+    OLCUM icin egitildi ve her biri bir karakteri disarida birakiyor
+    (mchen_mag.pt mag'i hic gormedi). Genelleme olcmek icin dogru, kullanmak
+    icin yanlis — elimizdeki veriyi bilerek eksik kullanmis oluruz.
+
+    Uretim modeli yoksa None doner ve cagiran sezgisele duser; sessizce bir
+    olcum modeline dusmek yanlis olurdu."""
+    import glob
+    dizin = os.path.join(kok, "_data", "modeller")
+    adaylar = []
+    for p in glob.glob(os.path.join(dizin, "*.pt")):
+        try:
+            import torch
+            k = torch.load(p, map_location="cpu").get("kunye") or {}
+        except Exception:                                          # noqa: BLE001
+            continue
+        if k.get("uretim"):
+            adaylar.append((k.get("tarih", ""), os.path.getmtime(p), p))
+    return max(adaylar)[2] if adaylar else None
+
+
 class _Tahminci:
     """Iskeleti kim cikariyor: POZ MODELI, yoksa sezgisel algoritma.
 
@@ -566,13 +594,15 @@ def main(argv=None):
              .replace("__KEMIK__", json.dumps([list(k) for k in sk.KEMIKLER]))
              .replace("__LABELS__", json.dumps(list(sk.LABELS))))
     kok_proje = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    varsayilan = os.path.join(kok_proje, "_data", "poz_modeli.pt")
-    ckpt = None if args.sezgisel else (args.model or
-                                       (varsayilan if os.path.exists(varsayilan) else None))
+    ckpt = None if args.sezgisel else (args.model or en_guncel_model(kok_proje))
     tahminci = _Tahminci(ckpt)
-    print(f"Iskelet tahmincisi: {tahminci.ad.upper()}"
-          + (f"  ({ckpt})" if tahminci.ad == "model" else
-             "  — poz modeli bulunamadi, sezgisel algoritma kullaniliyor"))
+    if tahminci.ad == "model":
+        print(f"Iskelet tahmincisi: MODEL  ({os.path.basename(ckpt)})")
+    else:
+        print("Iskelet tahmincisi: SEZGISEL — uretim modeli bulunamadi.\n"
+              "  Egitmek icin: ~/ComfyUI/venv/bin/python tools/pose_model.py "
+              "train _data/karisik_yan --holdout yok \\\n"
+              "                 --ckpt _data/modeller/uretim.pt")
     _sunucu(sayfa, Durum(args.output, args.frame_size, tahminci),
             args.port, not args.no_open)
     return 0

@@ -260,12 +260,24 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
     torch.manual_seed(tohum)
 
     satirlar = veri_oku(kok)
-    egitim = [s for s in satirlar if s["kaynak"].split("/")[0] != holdout]
-    test = [s for s in satirlar if s["kaynak"].split("/")[0] == holdout]
-    if not test:
-        raise SystemExit(f"HATA: '{holdout}' veri setinde yok. "
-                         f"Mevcut: {sorted({s['kaynak'].split('/')[0] for s in satirlar})}")
-    print(f"Egitim {len(egitim)} ornek | Test (holdout={holdout}) {len(test)} ornek")
+    # holdout="yok" -> URETIM modeli: hicbir sey disarida birakilmiyor.
+    # Olcum icin holdout sart (genellemeyi ancak gorulmemis karakter olcer),
+    # ama KULLANIM icin tam tersi: bir karakteri disarida birakmak, elimizdeki
+    # veriyi bilerek eksik kullanmak demek. GUI'nin ihtiyaci olan sey budur.
+    uretim = holdout in ("yok", "none", "")
+    if uretim:
+        egitim, test = satirlar, []
+        print(f"Egitim {len(egitim)} ornek | URETIM MODU — holdout yok, "
+              f"genelleme olcumu YAPILAMAZ")
+    else:
+        egitim = [s for s in satirlar if s["kaynak"].split("/")[0] != holdout]
+        test = [s for s in satirlar if s["kaynak"].split("/")[0] == holdout]
+        if not test:
+            raise SystemExit(
+                f"HATA: '{holdout}' veri setinde yok. Mevcut: "
+                f"{sorted({s['kaynak'].split('/')[0] for s in satirlar})}. "
+                f"Tum veriyle egitmek icin --holdout yok.")
+        print(f"Egitim {len(egitim)} ornek | Test (holdout={holdout}) {len(test)} ornek")
 
     ke, kt = Kume(kok, egitim, tuval), Kume(kok, test, tuval)
     dev = aygit()
@@ -289,23 +301,47 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
             opt.zero_grad(); kayip.backward(); opt.step()
             kayip_top += float(kayip); adim += 1
         plan.step()
-        eh = son = hata_px(model, kt, dev, tuval)
+        # Uretim modunda holdout yok: olcecek bir sey olmadigi icin her epok
+        # kaydediliyor, yani dosyada SON epok kaliyor. Kosinus plani bitiste
+        # sifira indigi icin dogru durak orasi.
+        eh = son = float("nan") if uretim else hata_px(model, kt, dev, tuval)
         th = hata_px(model, ke, dev, tuval) if e == epok - 1 else None
         isaret = ""
-        if eh < en_iyi:
+        if uretim or eh < en_iyi:
             en_iyi = eh
+            # KUNYE checkpoint'in ICINE yaziliyor. Onceden yalnizca
+            # holdout/tuval/derinlik vardi ve dosyalar birbirinden ayirt
+            # edilemiyordu: "_data/poz/model.pt hangi veriyle egitildi, ne
+            # skor aldi?" sorusunun cevabi hicbir yerde durmuyordu. Bir
+            # checkpoint kendi kendini anlatmali, cunku dosya adi tasinir,
+            # degisir, unutulur.
             torch.save({"model": model.state_dict(), "tuval": tuval,
-                        "holdout": holdout, "derinlik": derinlik}, cikti)
+                        "holdout": holdout, "derinlik": derinlik,
+                        "kunye": {
+                            "veri": os.path.abspath(kok),
+                            "egitim_ornek": len(egitim), "test_ornek": len(test),
+                            "egitim_karakter": len({s["kaynak"].split("/")[0]
+                                                    for s in egitim}),
+                            "epok": e + 1, "epok_toplam": epok,
+                            "parti": parti, "lr": lr, "tohum": tohum,
+                            "on_egitimli": on_egitimli,
+                            "holdout_hatasi": None if uretim else round(float(eh), 3),
+                            "uretim": uretim,
+                            "tarih": time.strftime("%Y-%m-%d %H:%M"),
+                        }}, cikti)
             isaret = "  <- kaydedildi"
         print(f"  epok {e+1:3d}/{epok}  kayip {kayip_top/max(adim,1):.4f}  "
-              f"holdout hatasi {eh:6.2f}px" + (f"  egitim {th:.2f}px" if th else "")
+              + ("" if uretim else f"holdout hatasi {eh:6.2f}px") + (f"  egitim {th:.2f}px" if th else "")
               + f"  {time.time()-t0:.0f}s{isaret}")
     # IKISI DE basiliyor. "En iyi" holdout uzerinde epok seciyor, yani test
     # kumesine bakarak karar veriyor — iyimser tarafli. Iki AYARI
     # karsilastirirken SON epogun hatasini kullan: kosinüs planı 16 epokta
     # sifira indigi icin son epok yakinsamis bir noktadir ve tarafsizdir.
-    print(f"\nEn iyi holdout hatasi: {en_iyi:.2f}px   "
-          f"Son epok: {son:.2f}px   model: {cikti}")
+    if uretim:
+        print(f"\nURETIM modeli yazildi (holdout yok, olcum yapilmadi): {cikti}")
+    else:
+        print(f"\nEn iyi holdout hatasi: {en_iyi:.2f}px   "
+              f"Son epok: {son:.2f}px   model: {cikti}")
     return en_iyi, son
 
 
@@ -315,7 +351,9 @@ def main(argv=None):
     p.add_argument("komut", choices=("train", "eval"))
     p.add_argument("veri", nargs="?", default=os.path.join(kok, "_data", "poz"))
     p.add_argument("--holdout", default="faküs",
-                   help="Disarida birakilacak karakter (genelleme olcumu)")
+                   help="Disarida birakilacak karakter (genelleme olcumu). "
+                        "'yok' = URETIM modeli: tum veriyle egitir, genelleme "
+                        "olcumu yapmaz. GUI'nin kullandigi model bu olmali.")
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -337,6 +375,26 @@ def main(argv=None):
     else:
         torch = _torch()
         d = torch.load(ckpt, map_location="cpu")
+        k = d.get("kunye")
+        if k:
+            # Alanlar TOLERANSLI okunuyor: bu klasordeki eski checkpoint'lerin
+            # kunyesi sonradan, elle yazildi ve tam degil.
+            parca = [f"veri={os.path.basename(str(k.get('veri', '?')))}"]
+            if k.get("tarih"):
+                parca.insert(0, k["tarih"])
+            if k.get("egitim_ornek"):
+                parca.append(f"{k['egitim_ornek']} ornek / "
+                             f"{k.get('egitim_karakter', '?')} kaynak")
+            if k.get("epok"):
+                parca.append(f"epok {k['epok']}/{k.get('epok_toplam', '?')}")
+            if k.get("holdout_hatasi") is not None:
+                parca.append(f"kayitli hata {k['holdout_hatasi']}px")
+            if k.get("not"):
+                parca.append(f"({k['not']})")
+            print("Kunye: " + "  ".join(parca))
+        else:
+            print("Kunye YOK — bu checkpoint kunye alani eklenmeden once "
+                  "uretilmis; hangi veriyle egitildigi bilinmiyor.")
         satirlar = veri_oku(args.veri)
         test = [s for s in satirlar if s["kaynak"].split("/")[0] == d["holdout"]]
         model = PozModeli(d["tuval"], len(sk.LABELS), on_egitimli=False)
