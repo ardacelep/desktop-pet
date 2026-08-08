@@ -523,6 +523,37 @@ def adim_check() -> None:
     print("  hepsi uygulamada sessizce yanlış çizime yol açıyor.")
     calistir(["node", os.path.join(ARAC, "check-characters.js")])
 
+def adim_palette_reduce() -> None:
+    """Karakterin renk paletini gerçek pixel art seviyesine indirir."""
+    print("\n— Renk Paletini Küçült (palette_reduce.py) —")
+    print("  AI üretimi sprite'ların şişirilmiş renk paletini (binlerce renk)")
+    print("  gerçek pixel art paletine (örn: 32-64 renk) indirir.")
+    
+    # Hedef dosya veya klasörü soruyoruz. palette_reduce.py ikisini de kabul ediyor.
+    hedef = yol_sor("Karakter klasörü (örn: characters/g1) veya tek PNG")
+
+    ek: list[str] = []
+
+    # --in-place bayrağı tehlikeli olabileceği için varsayılanı False ('h') yapıyoruz.
+    if evet_mi("Dosyaların üzerine doğrudan yazılsın mı (--in-place)?", False):
+        ek.append("--in-place")
+    else:
+        cikis = temizle(sor("Çıktı klasörü", hedef + "_kucultulmus"))
+        ek.extend(["--out", cikis])
+
+    # --colors parametresi. Kullanıcı boş geçerse aracın kendi otomatik k-means seçimi devreye girecek.
+    renk_sayisi = sayi_sor("Sabit renk sayısı (Boş bırakılırsa hedefe göre otomatik seçilir)")
+    if renk_sayisi:
+        ek.extend(["--colors", renk_sayisi])
+
+    # Önizleme dökümü. Görsel hata ayıklama için çok faydalı olduğundan varsayılanı True ('e').
+    if evet_mi("Önce/sonra karşılaştırması için önizleme PNG'si üretilsin mi?", True):
+        onizleme = temizle(sor("Önizleme dosyası yolu", kisalt(hedef + "_onizleme.png")))
+        ek.extend(["--preview", onizleme])
+
+    # arac() fonksiyonu, komutu terminale basar ve çalıştırır.
+    if arac("palette_reduce.py", hedef, *ek):
+        print(f"\n✓ Palet optimizasyonu tamamlandı.")
 
 def adim_test() -> None:
     """Araçların kendi regresyon testleri."""
@@ -549,6 +580,7 @@ MENU = [
     ("Sheet'i karelere böl", "split_sheet", lambda: adim_split()),
     ("Kareleri hizala/paketle", "pack_sheet", lambda: adim_pack()),
     ("Izgara referansı üret (Gemini için)", "grid_ref", adim_grid_ref),
+    ("Renk paletini küçült / optimize et", "palette_reduce", adim_palette_reduce),
     ("İskelet çıkar ve düzelt", "skeleton_edit", adim_iskelet),
     ("Poz üret", "rig_pose", adim_rig),
     ("Karakterleri doğrula", "check-characters", adim_check),
