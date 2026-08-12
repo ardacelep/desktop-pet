@@ -44,8 +44,65 @@ from PIL import Image
 # Parcalara bolme
 # ---------------------------------------------------------------------------
 
+def nokta_kemik_uzakligi(px: np.ndarray, py: np.ndarray,
+                         a: "tuple[float, float]", b: "tuple[float, float]") -> np.ndarray:
+    """Her (px,py) noktasinin [a,b] DOGRU PARCASINA uzakligi.
+
+    Sonsuz dogruya degil parcaya: dirsegin otesindeki bir piksel ust kolun
+    DOGRULTUSUNA yakin olabilir ama kola degil ele aittir. `t`nin [0,1]'e
+    kirpilmasi bunu hallediyor."""
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    uz2 = dx * dx + dy * dy
+    if uz2 < 1e-9:
+        return np.hypot(px - ax, py - ay)
+    t = np.clip(((px - ax) * dx + (py - ay) * dy) / uz2, 0.0, 1.0)
+    return np.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def kemige_gore_bol(rgba: np.ndarray, parcalar: list[dict]) -> dict[str, np.ndarray]:
+    """Her opak pikseli en yakin kemige atar (parcalarda `kemik` varsa).
+
+    Dikdortgen yolu elle yazilmis rig'ler icin yeterliydi ama OTOMATIK
+    uretimde cokuyor: capraz duran bir ust kolun eksen-hizali kutusu govdenin
+    buyuk kismini kapsiyor ve uzuvlar listede once geldigi icin o pikselleri
+    kol calıyor. Kemige uzaklik boyle bir yanlilik tasimiyor — kutu degil,
+    uzvun kendi ekseni olcut.
+
+    UZAKLIK HAM DEGIL, YARICAPA BOLUNMUS. Ham uzaklikla olculdu (ael, saga
+    bakan kare, 1944 opak piksel): govdeye 72 piksel kaliyor, kafaya 759,
+    iki ust kola 281. Yani govde kendi govdesini kaybediyor — yandan
+    gorunuste kol kemigi govde kemigine paralel ve ondan daha yakin gecerken
+    gogsu kollar paylasiyor. Kol donunce gogus de onunla giderdi.
+
+    Kemik 1B bir cizgi, uzuv ise 2B bir alan; alanin genisligi kemikten
+    kemige degisiyor. `yaricap` bunu tasiyor: karar `d/r` uzerinden veriliyor,
+    yani her kemik kendi kalinligi olcusunde hak iddia ediyor. Yaricap
+    verilmezse hepsi 1 kabul edilir ve davranis ham uzakliga doner."""
+    opak = rgba[:, :, 3] > 0
+    ys, xs = np.nonzero(opak)
+    maskeler = {p["ad"]: np.zeros(rgba.shape[:2], dtype=bool) for p in parcalar}
+    if ys.size == 0:
+        return maskeler
+    px, py = xs.astype(np.float64), ys.astype(np.float64)
+    uzaklik = np.stack([
+        nokta_kemik_uzakligi(px, py, p["kemik"][0], p["kemik"][1])
+        / max(float(p.get("yaricap", 1.0)), 1e-6)
+        for p in parcalar])
+    sahip = uzaklik.argmin(axis=0)
+    for i, p in enumerate(parcalar):
+        s = sahip == i
+        maskeler[p["ad"]][ys[s], xs[s]] = True
+    return maskeler
+
+
 def parcalara_bol(rgba: np.ndarray, parcalar: list[dict]) -> dict[str, np.ndarray]:
     """Her opak pikseli TEK bir parcaya atar.
+
+    Iki yol var. Parcalar `kemik` tasiyorsa (iskelet_rig.py'nin urettigi
+    rig'ler) en yakin kemige gore bolunuyor; yoksa asagidaki dikdortgen yolu
+    isliyor.
 
     Dikdortgenler ust uste biniyor (kolun kutusu govdeyi de kapiyor), bu
     yuzden "icinde kalan her kutuya kopyala" yaklasimi pikselleri
@@ -53,6 +110,10 @@ def parcalara_bol(rgba: np.ndarray, parcalar: list[dict]) -> dict[str, np.ndarra
     Bunun yerine listedeki SIRA oncelik oluyor, her piksel kendisini ilk
     talep eden parcaya gidiyor. Uzuvlar listede once yazilir.
     """
+    if parcalar and all("kemik" in p for p in parcalar):
+        maskeler = kemige_gore_bol(rgba, parcalar)
+        return {ad: np.where(m[:, :, None], rgba, 0) for ad, m in maskeler.items()}
+
     h, w = rgba.shape[:2]
     sahipli = np.zeros((h, w), dtype=bool)
     opak = rgba[:, :, 3] > 0
