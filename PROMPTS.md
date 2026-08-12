@@ -717,3 +717,90 @@ python3 tools/pack_sheet.py kareler/kare_*.png -o walk_right_spritesheet.png --g
 `on.gif`'i açın. Titreme varsa `pack_sheet` çıktısındaki örtüşme yüzdelerine bakın: düşük olan kare ya farklı ölçekte üretilmiş ya da pozu diğerlerinden çok farklı.
 
 Sheet'i `characters/` altına yerleştirip `meta.json` yazmak için: [README](README.md#yeni-karakter-ekleme). Doğrulamak için `npm run check`.
+
+---
+
+## 6. İskelet zorlamalı poz sheet'i (walk / özel animasyon)
+
+**Ne zaman:** elinizde bir karakter var ve onu **belirli pozlarda** istiyorsunuz.
+Poz referansını `tools/poz_referans.py` üretir:
+
+```bash
+python3 tools/poz_referans.py characters/ael/walk_right_spritesheet.png \
+    --klip walk_right --kare 4 -o _cikti/ael_poz.png
+```
+
+### Neden metin değil görsel
+
+Ölçüldü (`rig_pose.py`): Gemini'ye pozu **metinle** tarif etmek üç turda da
+başarısız oldu — iki ayrı sheet arasında alfa IoU **%100**, yani model hiçbir
+şeyi değiştirmedi. Teşhis çözümü de söylüyordu: *"metin uzamsal bilgi
+taşımıyor"*. Eksik olan görsel poz referansıydı.
+
+### Renk kodu
+
+| renk | ne |
+| --- | --- |
+| turuncu-kırmızı | karakterin **izleyiciye yakın** tarafındaki uzuvlar |
+| mavi | **uzak** taraftaki uzuvlar |
+| koyu gri | gövde, boyun, kafa dairesi + bakış yönü çizgisi |
+
+Bu kod olmadan model hangi kolun önde olduğunu bilemez ve örtüşmeyi/
+gölgelendirmeyi rastgele kurar.
+
+### Prompt
+
+> You will receive TWO images.
+>
+> **Image 1** is the reference character: a pixel art sprite. This defines
+> identity — palette, clothing, hair, face, body proportions, limb thickness,
+> outline style, shading style. Copy all of it exactly.
+>
+> **Image 2** is a POSE REFERENCE: a 2×2 grid of stick-figure skeletons.
+> It defines ONLY the pose. Colour code:
+> orange-red limbs are on the side of the body NEAREST the viewer,
+> blue limbs are on the FAR side, dark grey is the torso and the head circle,
+> and the short dark line inside the head circle points where the face looks.
+>
+> **Step 1 — analyse before drawing.** For each of the four cells, write one
+> or two sentences describing the pose: which leg is forward, which arm is
+> raised, how the torso is tilted, which limbs are in front and therefore
+> occlude the others, and where the light and shadow should fall as a result.
+> Do this in text first, then draw.
+>
+> **Step 2 — draw.** Produce a 2×2 grid pixel art sheet of the reference
+> character in those four poses, in the same reading order as image 2
+> (top-left, top-right, bottom-left, bottom-right).
+>
+> Hard requirements:
+> - The whole sheet must be drawn on ONE single pixel grid, one consistent
+>   pixel size across all four cells.
+> - The character must be the SAME SCALE in all four cells.
+> - Leave a completely empty band between cells — no frame, no cell number,
+>   no label, no ground shadow, no text anywhere.
+> - Background: a magenta (#FF00FF / #CC00CC) checkerboard, in a colour that
+>   appears nowhere on the character.
+> - Do not let the character touch the outer edge of the canvas; leave a
+>   clear margin.
+> - Block edges must be crisp. Do not anti-alias, do not blur, do not add
+>   noise or texture.
+> - Leave the bottom-right cell EMPTY if you need somewhere to place a
+>   signature or logo.
+>
+> Do not redesign the character. Do not change proportions, palette, or
+> clothing. Only the pose changes.
+
+### Çıktıyı işleme
+
+```bash
+python3 tools/pixelart_extract.py gemini_cikti.png -o _cikti/ham.png
+python3 tools/split_sheet.py _cikti/ham.png --rows 2 --cols 2 -o _cikti/kareler
+python3 tools/pack_sheet.py _cikti/kareler/*.png -o karakter_klip_spritesheet.png
+```
+
+### Pozun tutup tutmadığını ÖLÇÜN
+
+Gözle bakmak yetmez — eski başarısızlık tam olarak "değişmiş gibi görünüyor
+ama değişmemiş" biçimindeydi. Üretilen kareler arasındaki **alfa IoU**'ya
+bakın: %100'e yakınsa model pozu yok saymıştır ve prompt/referans
+değiştirilmelidir.
