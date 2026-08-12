@@ -108,10 +108,26 @@ def acilara_cevir(kp: dict) -> dict:
 def sablon_cikar(kayitlar: list[dict], kare_sayisi: int) -> dict:
     """Ayni animasyonun cok karakterli orneklerinden kanonik sablon uretir."""
     kare_kayit: dict[int, list[dict]] = {i: [] for i in range(kare_sayisi)}
-    # Kok hareketi KARAKTER ICINDE olculuyor. NECK'in mutlak y'si karakterin
-    # tuvalde nereye oturduguna bagli — poz ozelligi degil. Her karakterin
-    # kendi kare-ortalamasindan sapmasi aliniyor, sonra karakterler arasi
-    # medyan.
+    # Kok hareketi ZEMINE gore olculuyor: basan ayak (iki bilekten ALTTAKI)
+    # yerde duruyor, yer oynamiyor.
+    #
+    # Onceden tuvale gore olculuyordu (NECK.y / boy) ve karakterin kendi
+    # kare-ortalamasindan sapmasi aliniyordu. Bu, karakterin tuvalde SABIT bir
+    # ofsette oturmasini varsayiyor — ama her kare ayri kirpilip ortalandigi
+    # icin sinirlayici kutu kare kare oynuyor. Yani olculen sey salinim degil,
+    # KIRPMA TITREMESIYDI. Olculdu, sapmanin yayilimi (govde boyuna oranli):
+    #
+    #             ael   faküs    g1    mag  omerhan
+    #   tuvale   0.334  0.105  0.333  0.310  0.221    <- karakterler tutmuyor
+    #   ZEMINE   0.067  0.049  0.067  0.076  0.075    <- bes egri ust uste
+    #
+    # Govde boyunun %33'u kadar salinim yuruyuste yok; %7 var. Zemine gore
+    # olcunce bes karakterin egrisi ortusuyor (k3'te hepsi -0.03/-0.04),
+    # tuvale gore olcunce ortusmuyor — dogru olcut bu.
+    #
+    # Uygulama formulu DEGISMIYOR: her iki durumda da tutulan sey karakterin
+    # kendi dinlenme pozundan SAPMASI, degisen yalnizca sapmanin neye gore
+    # olculdugu.
     per_kar: dict[str, dict[int, float]] = {}
     for r in kayitlar:
         i = int(r["kaynak"].rsplit("/", 1)[1])
@@ -120,7 +136,9 @@ def sablon_cikar(kayitlar: list[dict], kare_sayisi: int) -> dict:
         kp = r["keypoints"]
         kare_kayit[i].append(acilara_cevir(kp))
         ad = r["kaynak"].split("/")[0]
-        per_kar.setdefault(ad, {})[i] = kp["NECK"][1] / max(govde_boyu(kp), 1e-6)
+        zemin = max(kp["LEFT LEG"][1], kp["RIGHT LEG"][1])
+        per_kar.setdefault(ad, {})[i] = ((kp["NECK"][1] - zemin)
+                                         / max(govde_boyu(kp), 1e-6))
 
     kok: dict[int, list[float]] = {i: [] for i in range(kare_sayisi)}
     for ad, kareler_ in per_kar.items():
@@ -234,7 +252,18 @@ def main(argv=None):
         sablon = json.load(f)[args.klip]
     from PIL import Image
     rgba = sk.kareyi_al(args.sprite, args.frame, None)
-    isk = sk.estimate(rgba)
+
+    # Dinlenme pozu MODELDEN geliyor. Burasi sablonun tek girdisi: acilar
+    # sablondan, uzunluklar dinlenme pozundan. Dinlenme yanlissa uretilen
+    # sekiz karenin hepsi ayni sekilde yanlis oluyor — hata dizi boyunca
+    # sabit kaliyor, tek karede kalmiyor.
+    import skeleton_edit as se
+    ckpt = None if args.sezgisel else (args.model or se.en_guncel_model(kok))
+    tahminci = se.Tahminci(ckpt)
+    yon = "east" if args.klip.endswith("_right") else "south"
+    isk = tahminci(rgba, yon)
+    print(f"dinlenme pozu: {tahminci.ad}"
+          + (f" ({os.path.relpath(ckpt, kok)})" if ckpt and tahminci.ad == "model" else ""))
     b = max(rgba.shape[:2])
     dinlenme = {l: (x / b, y / b) for l, (x, y) in isk.noktalar.items()}
 
