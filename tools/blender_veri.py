@@ -68,16 +68,41 @@ KEMIK = {
     "LEFT LEG":       "mixamorig:LeftFoot",
 }
 
-# Yuz noktalari kemikten degil, kafanin YONELIMINDEN turetiliyor. Ofsetler
-# kafa uzunluguna oranli; degerler PixelLab'in gercek karakterlerimizde
-# urettigi 2B iliskilere gore ayarlanacak (bkz. yuz_olcutleri()).
+# Yuz noktalari kemikten degil, kafanin YONELIMINDEN turetiliyor (Mixamo'da
+# goz/kulak kemigi yok). Ofsetler kafa uzunluguna oranli.
+#
+# KALIBRE EDILDI. Hedef, gercek karakterlerimizde PixelLab'in urettigi 2B
+# iliskiler — KAFA BOYUNA normalize edilmis, cunku govdeye gore normalize
+# etmek kafa BUYUKLUGU farkini iceri karistiriyor:
+#     yandan:  NOSE>EYE / NECK>NOSE = 0.295    EYE>EAR / NECK>NOSE = 0.585
+#     onden:                          0.639                          0.672
+#
+# Kisitsiz cozum oranlari birebir tutturuyor ama ANATOMIK OLARAK SACMA:
+# burun kafanin arkasinda (-0.565) ve iki kafa boyu yukarisinda (+2.076),
+# kulaklar 3.2 kafa boyu yanda. Yani olcut tutturulup olcutun temsil ettigi
+# sey bozuluyor. O yuzden noktalar kafa merkezine 0.6 kafa boyu icinde
+# tutuldu; ulasilan oranlar hedefin %95-101'i (biri %147).
+#
+# KALAN FARKIN SEBEBI OFSETLER DEGIL, KAFA BUYUKLUGU. Olculdu: Mixamo'da
+# kafa boyu / govde boyu = 0.159, ve hedef NECK>NOSE=0.482 icin burnun
+# boyundan 1.6 kafa boyu uzakta olmasi gerekirdi — kafanin cok disinda.
+# Bizim karakterlerimizde o oran buyuk cunku kafalari gercekten kocaman
+# (chibi). Bu ofsetlerle degil, edit-bone olceklemesiyle cozulur.
+# Degerler MESH'ten turetildi, orandan degil. Kafa tepelerinin kafa-yerel
+# araliklari (kafa kemigi = 1.0 birim, 807 tepe):
+#     ileri  -0.583 .. +0.680     en ileri tepe -0.311 yuksekliginde (cene/burun)
+#     yukari -0.779 .. +0.539
+#     yana   -0.444 .. +0.448     yanal uc noktalar -0.112 .. +0.047 (kulak hizasi)
+# Onceki surumde goz +0.40'taydi, yani neredeyse kafatasinin tepesinde
+# (tavan +0.539) ve render'da siluetin DISINDA kaliyordu — 30 yuz noktasinin
+# 12'si disaridaydi.
 YUZ_OFSET = {
     #            ileri,  yukari,   yana
-    "NOSE":      (0.55,   0.05,   0.00),
-    "RIGHT EYE": (0.42,   0.20,  -0.18),
-    "LEFT EYE":  (0.42,   0.20,   0.18),
-    "RIGHT EAR": (0.00,   0.15,  -0.42),
-    "LEFT EAR":  (0.00,   0.15,   0.42),
+    "NOSE":      (0.58,  -0.18,   0.00),
+    "RIGHT EYE": (0.42,   0.00,  -0.16),
+    "LEFT EYE":  (0.42,   0.00,   0.16),
+    "RIGHT EAR": (-0.10,  -0.03,  -0.40),
+    "LEFT EAR":  (-0.10,  -0.03,   0.40),
 }
 
 SIRA = ("NOSE", "NECK", "RIGHT SHOULDER", "RIGHT ELBOW", "RIGHT ARM",
