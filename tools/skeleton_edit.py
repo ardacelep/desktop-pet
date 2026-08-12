@@ -120,15 +120,60 @@ class _Tahminci:
             print(f"UYARI: poz modeli yuklenemedi ({err}); sezgisel tahminciye "
                   f"dusuluyor.", file=sys.stderr)
 
+    # Egitim verisinde siluet yuksekligi medyani 122px, %5 dilimi 91px.
+    # Hedef bunun biraz altina, 100'e konuldu: tam sayi kati zorunlulugu
+    # yuzunden tam 122'ye oturmak mumkun degil ve hedefi yuksek tutmak kucuk
+    # sprite'larda gereksiz buyuk katlar seciyor.
+    HEDEF_SILUET = 100
+
+    def _buyutme_kati(self, kare: np.ndarray) -> int:
+        opak = kare[:, :, 3] > 0
+        ys, _ = np.where(opak)
+        if ys.size == 0:
+            return 1
+        boy = int(ys.max() - ys.min() + 1)
+        if boy <= 0:
+            return 1
+        # ASAGI yuvarlaniyor, yakina degil: hedefi asmak olculdu ve zarar
+        # veriyor. 63px'lik bir siluette round 2 kat secip 126px'e cikariyor
+        # ve hata 2.04'ten 2.90'a yukseliyor; asagi yuvarlayinca 1 katta
+        # kalip 2.04'te kaliyor. Yani "biraz kucuk" "biraz buyuk"ten iyi.
+        return max(1, min(8, int(self.HEDEF_SILUET / boy)))
+
     def __call__(self, kare: np.ndarray, yon: str) -> sk.Iskelet:
         if self._model is None:
             return sk.estimate(kare, direction=yon)
         import torch
         import pose_dataset as pdset
+
+        # KUCUK SPRITE'I ONCE BUYUT. `kanvasa_yerlestir` bilerek buyutmuyor —
+        # egitim verisi uretirken dogru karar, cunku pixel art'i buyutmek
+        # sahte ara tonlar uretir. Ama CIKARIMDA tam tersi gerekiyor: model
+        # karakteri egitimde gordugu boyda gormeli.
+        #
+        # Olculdu, ael idle karesi farkli boylarda:
+        #     21px sprite -> 29.18px hata      65px -> 2.04px
+        #     34px        ->  9.01px           87px -> 0.52px
+        #     43px        ->  6.94px          261px -> 3.31px
+        # Egitim verisinde siluet yuksekligi medyani 122px (%5 dilimi 91).
+        # Yani 50 pikselin altindaki bir sprite dagilimin tamamen disinda
+        # kaliyor ve cikti kullanilamaz oluyor. Pixel art genelde 32x32 ya da
+        # 48x48 oldugu icin bu nadir bir durum degil, olagan durum.
+        #
+        # Buyutme TAM SAYI katiyla ve NEAREST ile: ara ton uretmiyor, yalnizca
+        # her pikseli bir bloga ceviriyor. Cikti koordinatlari sonunda ayni
+        # katsayiya bolunerek KAREYE geri tasiniyor.
+        kat = self._buyutme_kati(kare)
+        if kat > 1:
+            from PIL import Image as _I
+            kare = np.array(_I.fromarray(kare).resize(
+                (kare.shape[1] * kat, kare.shape[0] * kat), _I.NEAREST))
+
         # Model, egitimde gordugu tuvale gore calisiyor: kare ortalanip
         # `tuval` boyutuna yerlestiriliyor. Donusum degerleri saklaniyor ki
         # cikti KAREYE geri tasinabilsin.
         tuval, olcek, dx, dy = pdset.kanvasa_yerlestir(kare, self._tuval)
+        olcek, dx, dy = olcek * kat, dx, dy
         # Girdi normalizasyonu pose_model.Kume ile BIREBIR ayni olmali.
         rgb = np.where(tuval[:, :, 3:4] > 0, tuval[:, :, :3], 255).astype(np.float32) / 255.0
         x = rgb.transpose(2, 0, 1)
