@@ -263,8 +263,78 @@ def kamerayi_yerlestir(kam, arm, aci_derece, pay=1.25):
     bpy.context.view_layer.update()
 
 
+# ORAN TARAMASI. Olculdu: model govde/kafa orani 8-10 bandinda 2.91px,
+# ama BIZIM karakterlerimizin bandinda (3-4) 5.13px. Egitim havuzu Chen
+# yuzunden 8-10'a yigilmis; Mixamo ise 4.3 civarinda. Kafayi buyutmek
+# dagilimi hedefe tasiyor.
+#
+# POZ KEMIGI OLCEKLEMEK ISE YARAMIYOR — olculdu: aksiyonda
+# pose.bones["mixamorig:Head"].scale F-egrileri var ve render kareyi yeniden
+# degerlendirince olcegi eziyor. Kafa olcegi 1.0 ve 1.8 ile alinan iki render
+# BIREBIR ayni cikti (249x390, 4764 opak piksel) ama ETIKETLER degisiyordu,
+# yani etiket goruntuden kopuyordu.
+#
+# EDIT BONE (dinlenme pozu) aksiyon tarafindan EZILMIYOR: aksiyon poz
+# uzayinda calisiyor, dinlenme pozuna dokunmuyor. Mesh dinlenme pozuna
+# bagli oldugu icin deformasyon da takip ediyor.
+def _kafa_olcekle(arm, kat):
+    """Kafa edit-bone'unu `kat` ile olcekler; geri almak icin veri doner.
+
+    Cocuk kemikler (HeadTop_End) kafayla birlikte tasiniyor, yoksa kafa
+    buyurken tepe noktasi yerinde kalir ve kafa_cercevesi() yanlis boy olcer."""
+    if abs(kat - 1.0) < 1e-6:
+        return None
+    onceki_mod = bpy.context.object.mode if bpy.context.object else "OBJECT"
+    onceki_aktif = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.data.edit_bones["mixamorig:Head"]
+    kayit = {"head": eb.head.copy(), "tail": eb.tail.copy(),
+             "cocuk": {c.name: (c.head.copy(), c.tail.copy()) for c in eb.children}}
+    yon = eb.tail - eb.head
+    eb.tail = eb.head + yon * kat
+    for c in eb.children:                      # cocuklari yeni uca tasi
+        d = c.head - kayit["head"] - yon
+        c.head = eb.tail + d * kat
+        c.tail = c.head + (c.tail - c.head) * kat
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.objects.active = onceki_aktif
+    return kayit
+
+
+def _kafa_geri(arm, kayit):
+    if not kayit:
+        return
+    onceki_aktif = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.data.edit_bones["mixamorig:Head"]
+    eb.head, eb.tail = kayit["head"], kayit["tail"]
+    for ad, (h, t) in kayit["cocuk"].items():
+        c = arm.data.edit_bones.get(ad)
+        if c:
+            c.head, c.tail = h, t
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.objects.active = onceki_aktif
+
+
+def _izole(arm):
+    """Yalnizca `arm`'a bagli mesh'ler gorunur kalsin; digerlerini gizler.
+
+    Gerekli, cunku her Mixamo FBX'i KENDI karakteriyle geliyor: uc animasyon
+    ice aktarilinca sahnede uc karakter olur ve render'da hepsi ust uste
+    cikar. Onceki gorunurluk durumu doner, cagiran geri yukleyebilsin."""
+    onceki = {}
+    for o in bpy.data.objects:
+        if o.type != "MESH":
+            continue
+        onceki[o.name] = o.hide_render
+        o.hide_render = (o.parent is not arm)
+    return onceki
+
+
 def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
-         seffaf=True, cozunurluk=512, yonler=None):
+         seffaf=True, cozunurluk=512, yonler=None, adim=1):
     sahne = bpy.context.scene
     arm = _arm(armature)
     kam = sahne.camera
@@ -279,6 +349,8 @@ def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
     sahne.render.image_settings.file_format = "PNG"
     sahne.render.image_settings.color_mode = "RGBA"
     sahne.render.resolution_x = sahne.render.resolution_y = cozunurluk
+
+    mesh_onceki = _izole(arm)
 
     gorseller = os.path.join(cikti, "gorseller")
     os.makedirs(gorseller, exist_ok=True)
@@ -295,7 +367,10 @@ def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
     n = 0
     with open(yol, "w", buffering=1) as f:
         for yon_ad in secilen:
-            for kare in range(int(a), int(b) + 1):
+            # `adim` seyreltme icin: Breathing Idle 299 kare ve komsu
+            # kareler neredeyse ayni. Hepsini almak veriyi tekrarla sisirir
+            # ve modele ayni pozu yuzlerce kez gostermis oluruz.
+            for kare in range(int(a), int(b) + 1, max(1, int(adim))):
                 sahne.frame_set(kare)
                 # Kamera HER KAREDE yeniden yerlestiriliyor: karakter yuruyusle
                 # yer degistiriyor, sabit kamera onu kadrajdan cikariyor.
@@ -317,7 +392,8 @@ def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
                     "cozunurluk": cozunurluk,
                 }, ensure_ascii=False) + "\n")
                 n += 1
-            print(f"  {yon_ad}: {int(b)-int(a)+1} kare  (toplam {n})", flush=True)
+            print(f"  {yon_ad}: {len(range(int(a), int(b)+1, max(1,int(adim))))} kare  "
+                  f"(toplam {n})", flush=True)
     kam.location, kam.rotation_mode = kam_onceki[0], kam_onceki[1]
     if kam_onceki[1] == "QUATERNION":
         kam.rotation_quaternion = kam_onceki[2]
@@ -326,6 +402,8 @@ def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
     if kam_onceki[3] is not None:
         kam.data.ortho_scale = kam_onceki[3]
 
+    for ad, v in mesh_onceki.items():
+        bpy.data.objects[ad].hide_render = v
     (sahne.render.film_transparent, sahne.render.filepath,
      sahne.render.image_settings.file_format,
      sahne.render.image_settings.color_mode,

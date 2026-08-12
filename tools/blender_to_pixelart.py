@@ -86,9 +86,18 @@ def main(argv=None):
     p.add_argument("--augment", type=int, default=6)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--adim", type=int, default=1, metavar="N",
+                   help="Her yonde N karede bir al. Komsu kareler birbirine cok "
+                        "yakin oldugu icin hepsini almak veriyi tekrarla sisirir; "
+                        "poz cesitliligi neredeyse ayni kalir.")
     args = p.parse_args(argv)
 
     satirlar = [json.loads(l) for l in open(os.path.join(args.input, "etiketler.jsonl"))]
+    if args.adim > 1:
+        # Kare indeksi kaynaktan okunuyor; seyreltme HER YON icinde ayri
+        # yapilmali, yoksa bazi yonler tumuyle atlanir.
+        satirlar = [r for r in satirlar
+                    if int(r["kaynak"].rsplit("_", 1)[1]) % args.adim == 1]
     if args.limit:
         satirlar = satirlar[:args.limit]
     gorseller = os.path.join(args.output, "gorseller")
