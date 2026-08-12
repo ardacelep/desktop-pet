@@ -37,11 +37,29 @@ class SpriteAnimator {
     this.frameCount = clip.frameCount;
     this.frameDuration = clip.frameDuration;
     this.flip = Boolean(clip.flip);
+    // GEÇİŞ klipleri döngü değil. 'otur' ayaktan oturmaya geçiyor; döngüye
+    // alınınca pet sürekli oturup kalkıyor gibi görünüyor. loop:false olan
+    // klip son karede DURUYOR.
+    this.loop = clip.loop !== false;
+    // TERS OYNATMA: 'kalk' klibi 'otur'un dosyasini geriye oynatiyor.
+    // walk_left'in walk_right'i flip:true ile yeniden kullanmasiyla ayni
+    // desen — ayri bir sprite sheet uretmeye gerek yok.
+    this.reverse = Boolean(clip.reverse);
+    // YOYO: ileri oyna, son karede `yoyo` ms bekle, sonra geri oyna ve dur.
+    // El sallamada gerekiyordu: klip 980ms, REACT_DURATION 2600ms; tek-sefer
+    // oynatinca el 1.6 saniye havada DONUYORDU.
+    this.yoyo = Number(clip.yoyo) || 0;
+    this.yon = 1;
+    this.bekleme = 0;
+    this.bitti = false;
     this.key = clip.key;
 
     if (!sameClip) {
-      this.frameIndex = 0;
+      this.frameIndex = this.reverse ? this.frameCount - 1 : 0;
       this.elapsed = 0;
+      this.yon = this.reverse ? -1 : 1;
+      this.bekleme = 0;
+      this.bitti = false;
     } else if (this.frameIndex >= this.frameCount) {
       this.frameIndex = 0;
     }
@@ -54,10 +72,44 @@ class SpriteAnimator {
   /** @param {number} dt geçen süre (ms) */
   update(dt) {
     if (!this.image || this.frameCount <= 1) return;
+    if (this.loop && !this.yoyo) {
+      this.elapsed += dt;
+      while (this.elapsed >= this.frameDuration) {
+        this.elapsed -= this.frameDuration;
+        this.frameIndex = (this.frameIndex + 1) % this.frameCount;
+      }
+      return;
+    }
+    if (this.bitti) return;                       // son karede duruyor
+    if (this.bekleme > 0) { this.bekleme -= dt; return; }
+
     this.elapsed += dt;
     while (this.elapsed >= this.frameDuration) {
       this.elapsed -= this.frameDuration;
-      this.frameIndex = (this.frameIndex + 1) % this.frameCount;
+      const sonraki = this.frameIndex + this.yon;
+      if (sonraki >= 0 && sonraki < this.frameCount) {
+        this.frameIndex = sonraki;
+        continue;
+      }
+      // Uca gelindi
+      if (this.yoyo && this.yon === 1) {
+        this.bekleme = this.yoyo;                 // tepede bekle, sonra geri
+        this.yon = -1;
+        this.elapsed = 0;
+        return;
+      }
+      if (this.loop) {
+        // Yoyo + dongu: salinim tekrarlanıyor (uyku sırasında baş sallanması).
+        // Bastan basla, yon ileri.
+        this.frameIndex = this.reverse ? this.frameCount - 1 : 0;
+        this.yon = this.reverse ? -1 : 1;
+        this.bekleme = this.yoyo;
+        this.elapsed = 0;
+        return;
+      }
+      this.bitti = true;
+      this.elapsed = 0;
+      break;
     }
   }
 

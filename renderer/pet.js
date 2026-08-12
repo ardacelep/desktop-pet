@@ -4,7 +4,11 @@ const STATE = {
   IDLE: 'IDLE',
   WALKING: 'WALKING',
   DRAGGING: 'DRAGGING',
-  REACTING: 'REACTING'
+  REACTING: 'REACTING',
+  RESTING: 'RESTING',      // oturuyor — uzun boşta kalınca
+  SLEEPING: 'SLEEPING',    // uyuyor — daha da uzun
+  JUMPING: 'JUMPING',      // çift tıklama
+  RISING: 'RISING'         // oturmuş halden ayağa — 'otur'un tersi
 };
 
 // Tıklama mı sürükleme mi ayrımı için eşikler
@@ -14,6 +18,16 @@ const CLICK_TIME_THRESHOLD = 400; // ms
 const IDLE_MIN = 3000;
 const IDLE_MAX = 9000;
 const REACT_DURATION = 2600;
+// Zıplama yoyo: 770ms yukarı + 120ms dorukta + 770ms aşağı. Süre klibin
+// toplamıyla eşleşmeli, yoksa iniş yarıda kesilip pet havada IDLE'a döner.
+const JUMP_DURATION = 1660;
+const DOUBLE_CLICK_MS = 400;
+// Boşta kalma merdiveni: yürüme denemesi başarısız olunca (yani pet gidecek
+// yer bulamayınca) ya da art arda beklemeler birikince aşağı iniyor.
+// Süreler bilerek uzun: masaüstünde sürekli oturup kalkan bir pet dikkat
+// dağıtıyor, seyrek olması gerekiyor.
+const REST_AFTER = 22000;    // ms boşta -> otur
+const SLEEP_AFTER = 55000;   // ms boşta -> uyu
 
 // Balon ile karakterin başı arasında bırakılan en az boşluk (native px).
 const BUBBLE_GAP = 2;
@@ -109,7 +123,14 @@ class Pet {
   async applyCharacter(character) {
     const { meta, baseUrl, nativeFrameSize } = character;
 
-    const names = ['idle', 'walk_right', 'walk_left'];
+    // Klipler meta.json'dan KEŞFEDİLİYOR, sabit listeden değil. Sabit liste
+    // ('idle','walk_right','walk_left') yeni bir klip eklendiğinde onu
+    // sessizce yok sayıyordu: meta.json'da tanımlı olmasına rağmen
+    // this.clips'e girmiyor, playClip onu bulamayıp idle'a düşüyordu.
+    // Bir klip girdisi, `file` alanı taşıyan bir nesnedir; walkSpeed/lines
+    // gibi skaler alanlar bu ölçüte takılmıyor.
+    const names = Object.keys(meta).filter(
+      (k) => meta[k] && typeof meta[k] === 'object' && typeof meta[k].file === 'string');
     const clips = {};
     for (const name of names) {
       const def = meta[name];
@@ -123,6 +144,9 @@ class Pet {
         frameCount: def.frameCount,
         frameDuration: def.frameDuration,
         flip: Boolean(def.flip),
+        loop: def.loop !== false,
+        reverse: Boolean(def.reverse),
+        yoyo: Number(def.yoyo) || 0,
         content: measureContent(image, frameSize, def.frameCount)
       };
     }
@@ -317,6 +341,19 @@ class Pet {
 
   setState(next) {
     if (this.state === next) return;
+    // Boşta sayacını YALNIZCA KULLANICI ETKİLEŞİMİ sıfırlıyor.
+    // Önce yürümeyi de sıfırlayıcı saymıştım ve merdiven hiç işlemiyordu:
+    // pet kendi kendine birkaç saniyede bir yürüyor, sayaç 22 saniyeye asla
+    // ulaşamıyordu. Kendi kendine yürümek boşta davranışının parçası, onu
+    // "meşgul" saymak yanlış.
+    // RISING de burada olmali: kullanici yerdeki peti tikladiginda basliyor.
+    // Listeden dusunce sayac 55000'de kaliyordu — pet kalkiyor, IDLE'a
+    // donuyor ve ayni karede yeniden uyuyordu; kalkma animasyonu anlamsiz
+    // goruntlenip aninda geri sariyordu.
+    if (next === STATE.DRAGGING || next === STATE.REACTING
+        || next === STATE.JUMPING || next === STATE.RISING) {
+      this.bosSure = 0;
+    }
     this.state = next;
     this.stateTimer = 0;
 
@@ -329,10 +366,24 @@ class Pet {
       this.playClip(this.walkClipName());
     } else if (next === STATE.DRAGGING) {
       this.targetX = null;
-      this.playClip('idle');
+      // playClip eksik klipte idle'a düşüyor, yani bu klibi taşımayan
+      // karakterler eskisi gibi çalışmaya devam ediyor.
+      this.playClip('suruklenme');
     } else if (next === STATE.REACTING) {
       this.targetX = null;
-      this.playClip('idle');
+      this.playClip('tepki');
+    } else if (next === STATE.RESTING) {
+      this.targetX = null;
+      this.playClip('otur');
+    } else if (next === STATE.SLEEPING) {
+      this.targetX = null;
+      this.playClip('uyu');
+    } else if (next === STATE.JUMPING) {
+      this.targetX = null;
+      this.playClip('zipla');
+    } else if (next === STATE.RISING) {
+      this.targetX = null;
+      this.playClip('kalk');
     }
   }
 
@@ -393,13 +444,43 @@ class Pet {
 
     switch (this.state) {
       case STATE.IDLE:
-        if (this.stateTimer >= this.nextIdleWait) {
+        // Boşta kalma merdiveni. `bosSure` state değişimlerinde sıfırlanıyor,
+        // stateTimer ise her IDLE turunda sıfırlandığı için tek başına
+        // "ne kadardır boşta" sorusunu cevaplayamıyor.
+        this.bosSure += dt;
+        if (this.bosSure >= SLEEP_AFTER && this.clips.uyu) {
+          this.setState(STATE.SLEEPING);
+        } else if (this.bosSure >= REST_AFTER && this.clips.otur) {
+          this.setState(STATE.RESTING);
+        } else if (this.stateTimer >= this.nextIdleWait) {
           if (this.pickNewWalkTarget()) this.setState(STATE.WALKING);
           else this.stateTimer = 0;
         }
         break;
 
+      case STATE.RESTING:
+        // Oturmadan uyumaya geçiş; merdiven burada da işliyor.
+        this.bosSure += dt;
+        if (this.bosSure >= SLEEP_AFTER && this.clips.uyu) this.setState(STATE.SLEEPING);
+        break;
+
+      case STATE.SLEEPING:
+        break;   // uyanmak yalnızca etkileşimle (tıklama/sürükleme)
+
+      case STATE.JUMPING:
+        if (this.stateTimer >= JUMP_DURATION) this.setState(STATE.IDLE);
+        break;
+
+      case STATE.RISING:
+        // Kalkma bitince normale dön. Süre klibin kendi uzunluğundan
+        // geliyor; sabit yazsaydık klip değişince sessizce uyumsuz olurdu.
+        if (this.stateTimer >= this.clipDuration('kalk')) this.setState(STATE.IDLE);
+        break;
+
       case STATE.WALKING:
+        // Yürürken de boşta sayılıyor (bkz. setState). Hedefe varınca IDLE'a
+        // dönüyor ve merdiven oradan devam ediyor.
+        this.bosSure += dt;
         this.updateWalk(dt);
         break;
 
@@ -541,7 +622,33 @@ class Pet {
     this.setInteractive(this.isOverSprite(e.clientX, e.clientY));
   }
 
+  /** Klibin bir turunun süresi (ms). */
+  clipDuration(name) {
+    const c = this.clips[name];
+    return c ? c.frameCount * c.frameDuration : 0;
+  }
+
+  /** Oturmuş/uyur haldeyse önce ayağa kalksın; ışınlanma gibi görünmesin. */
+  oturuyorMu() {
+    return this.state === STATE.RESTING || this.state === STATE.SLEEPING;
+  }
+
   react() {
+    // ÇİFT TIKLAMA BURADA tespit ediliyor, `dblclick` olayıyla değil.
+    // Olaya güvenmek kırılgan çıktı: pencere tıklamalar arasında
+    // geçirgenliğe dönebiliyor (setInteractive), ikinci tıklama canvas'a
+    // ulaşmıyor ve dblclick hiç ateşlenmiyor. react() ise mouseup'tan
+    // çağrıldığı için her tıklamada kesin koşuyor.
+    const simdi = performance.now();
+    const cift = simdi - this.sonTiklama < DOUBLE_CLICK_MS;
+    this.sonTiklama = simdi;
+    // Yerdeyken tıklanınca önce KALK, tepki bir sonraki tıklamaya kalsın.
+    if (this.oturuyorMu() && this.clips.kalk) { this.setState(STATE.RISING); return; }
+    if (cift && this.clips.zipla) {
+      this.state = STATE.IDLE;          // art arda çift tıklamada süre yenilensin
+      this.setState(STATE.JUMPING);
+      return;                            // balon çıkarma, zıplama tek başına yeter
+    }
     const line = this.lines[Math.floor(Math.random() * this.lines.length)];
     this.bubble.show(line, REACT_DURATION, this.direction === 'left' ? -1 : 1);
     // REACTING'e girmek için önce state'i sıfırla (art arda tıklamada süre yenilensin)

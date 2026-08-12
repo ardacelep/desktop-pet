@@ -2,7 +2,6 @@
   "displayName": "Ael",
   "nativeFrameSize": 87,
   "displayScale": 1,
-
   "idle": {
     "file": "idle_spritesheet.png",
     "frameSize": 87,
@@ -22,12 +21,55 @@
     "frameDuration": 120,
     "flip": true
   },
-
   "walkSpeed": 42,
   "lines": [
     "Selam!",
     "Bugün nasılsın?",
     "Bir mola versene.",
     "Beni sürükleyebilirsin!"
-  ]
+  ],
+  "tepki": {
+    "file": "tepki_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 7,
+    "frameDuration": 140,
+    "yoyo": 640
+  },
+  "suruklenme": {
+    "file": "suruklenme_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 7,
+    "frameDuration": 120,
+    "yoyo": 100
+  },
+  "otur": {
+    "file": "otur_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 7,
+    "frameDuration": 200,
+    "loop": false
+  },
+  "uyu": {
+    "file": "uyu_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 5,
+    "frameDuration": 420,
+    "yoyo": 500
+  },
+  "zipla": {
+    "file": "zipla_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 7,
+    "frameDuration": 110,
+    "yoyo": 120,
+    "loop": false
+  },
+  "kalk": {
+    "file": "otur_spritesheet.png",
+    "frameSize": 87,
+    "frameCount": 7,
+    "frameDuration": 200,
+    "loop": false,
+    "reverse": true
+  }
 }
