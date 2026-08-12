@@ -33,6 +33,7 @@ import argparse
 import base64
 import binascii
 import http.server
+import glob
 import io
 import json
 import os
@@ -88,7 +89,7 @@ def en_guncel_model(kok: str) -> str | None:
     return max(adaylar)[2] if adaylar else None
 
 
-class _Tahminci:
+class Tahminci:
     """Iskeleti kim cikariyor: POZ MODELI, yoksa sezgisel algoritma.
 
     Model varsayilan, cunku olculdu (dort holdout):
@@ -270,6 +271,18 @@ SAYFA = r"""<!doctype html>
   <div style="margin-top:10px">
     <button class="ana" id="kaydet_btn" onclick="kaydet()" disabled>Kaydet</button>
   </div>
+  <div id="gezinme" style="display:none;margin-top:10px">
+    <label>Klasor</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button onclick="gez(-1)">‹ onceki</button>
+      <button onclick="gez(1)">sonraki ›</button>
+      <span id="ilerleme" style="color:#9aa4b2"></span>
+    </div>
+    <select id="dosya_sec" style="width:100%;margin-top:6px"
+            onchange="dosyaAc(this.value)"></select>
+  </div>
+  <div id="kayit_yolu" style="margin-top:10px;font-size:11px;color:#7d8592;
+       word-break:break-all"></div>
   <div id="durum"></div>
   <ul id="liste"></ul>
   <p class="ipucu">
@@ -366,6 +379,7 @@ async function tespit(yeni = false) {
     const g = await r.json();
     if (!r.ok) { bildir(g.hata || 'tespit basarisiz', true); return; }
     durum = Object.assign(durum, g);
+    if (g.kayit) document.getElementById('kayit_yolu').textContent = 'kayit → ' + g.kayit;
     im = new Image(); im.src = durum.sprite_kare; im.onload = ciz;
     document.getElementById('kaydet_btn').disabled = false;
     document.getElementById('bosluk').hidden = true;
@@ -384,10 +398,63 @@ function kareGec(d) {
   durum.kare = Math.max(0, Math.min(durum.kare_say - 1, (durum.kare || 0) + d));
   tespit();
 }
+let dosyalar = [], dosyaIx = -1;
+
+async function listeYukle() {
+  try {
+    const r = await fetch('/liste', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+    const g = await r.json();
+    document.getElementById('kayit_yolu').textContent = 'kayit → ' + g.kayit;
+    if (!g.klasor || !g.dosyalar.length) return;
+    dosyalar = g.dosyalar;
+    document.getElementById('gezinme').style.display = 'block';
+    const sel = document.getElementById('dosya_sec');
+    sel.innerHTML = '';
+    dosyalar.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.ad; o.textContent = (d.bitti ? '✓ ' : '  ') + d.ad;
+      sel.appendChild(o);
+    });
+    const kalan = dosyalar.filter(d => !d.bitti);
+    document.getElementById('ilerleme').textContent =
+      `${dosyalar.length - kalan.length}/${dosyalar.length} etiketli`;
+    // Ilk etiketlenmemis kareden basla: kaldigin yerden devam.
+    if (dosyaIx < 0) dosyaAc((kalan[0] || dosyalar[0]).ad);
+  } catch (e) { bildir(String(e), true); }
+}
+
+async function dosyaAc(ad) {
+  dosyaIx = dosyalar.findIndex(d => d.ad === ad);
+  document.getElementById('dosya_sec').value = ad;
+  bildir('yukleniyor…');
+  const r = await fetch('/dosya', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({ad})});
+  const g = await r.json();
+  if (!r.ok) { bildir(g.hata || 'acilamadi', true); return; }
+  durum = {sprite: g.sprite, ad: g.ad};
+  tespit(true);
+}
+
+function gez(d) {
+  if (!dosyalar.length) return;
+  const i = Math.min(dosyalar.length - 1, Math.max(0, dosyaIx + d));
+  dosyaAc(dosyalar[i].ad);
+}
+
+document.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT') return;
+  if (ev.key === 'ArrowLeft')  { ev.preventDefault(); gez(-1); }
+  if (ev.key === 'ArrowRight') { ev.preventDefault(); gez(1); }
+  if (ev.key === 's' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); kaydet(); }
+});
+
 function bildir(m, hata=false) {
   const d = document.getElementById('durum');
   d.textContent = m; d.className = hata ? 'hata' : '';
 }
+
+listeYukle();
 
 /* ---- cizim ---- */
 function ciz() {
@@ -492,9 +559,19 @@ async function kaydet() {
     const r = await fetch('/save', {method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({noktalar: durum.noktalar, kare: durum.kare,
-                            ad: durum.ad, yon: document.getElementById('yon').value})});
+                            ad: durum.ad, w: durum.w, h: durum.h,
+                            yon: document.getElementById('yon').value})});
     const g = await r.json();
-    bildir(r.ok ? `✓ kaydedildi: ${g.yol}` : (g.hata || 'kaydedilemedi'), !r.ok);
+    bildir(r.ok ? `✓ kaydedildi (${g.sayi} etiket) → ${g.yol}`
+                : (g.hata || 'kaydedilemedi'), !r.ok);
+    if (r.ok && dosyalar.length) {
+      dosyalar[dosyaIx].bitti = true;
+      const sel = document.getElementById('dosya_sec');
+      sel.options[dosyaIx].textContent = '✓ ' + dosyalar[dosyaIx].ad;
+      const bitti = dosyalar.filter(d => d.bitti).length;
+      document.getElementById('ilerleme').textContent =
+        `${bitti}/${dosyalar.length} etiketli`;
+    }
   } catch (e) { bildir(String(e), true); }
 }
 </script></body></html>
@@ -518,20 +595,75 @@ def _png_datauri(a: np.ndarray) -> str:
 
 
 class Durum:
-    """Sunucunun tuttugu tek oturumluk durum."""
+    """Sunucunun tuttugu tek oturumluk durum.
+
+    KAYIT NEREYE GIDIYOR
+
+        Eskiden her kare CALISMA DIZININE ayri bir JSON olarak yaziliyordu
+        (`<ad>_iskelet_<kare>.json`). `npm run skeleton` depo kokunden
+        kostugu icin 36 karelik bir toplu etiketleme depo kokune 36 dosya
+        saciyordu ve nereye gittigi arayuzde gorunmuyordu.
+
+        Artik tek bir JSONL'e yaziliyor ve yol arayuzde yaziyor. Kayit
+        (dosya, kare) anahtarina gore GUNCELLENIYOR: ayni kareyi ikinci kez
+        kaydetmek satiri cogaltmiyor, degistiriyor.
+
+    KALDIGIN YERDEN DEVAM
+        Bir kare acildiginda once KAYITTA aranıyor; varsa modelin tahmini
+        degil SENIN duzeltmen yukleniyor. Bu olmadan bir kareye geri donmek
+        yapilan duzeltmeyi sessizce cope atardi.
+    """
 
     def __init__(self, cikti: str | None, kutu: int | None,
-                 tahminci: "_Tahminci | None" = None):
+                 tahminci: "Tahminci | None" = None,
+                 kayit: str | None = None, klasor: str | None = None):
         self.cikti = cikti
         self.kutu = kutu
         self.z: dict[str, float] = {}
-        self.tahminci = tahminci or _Tahminci(None)
+        self.tahminci = tahminci or Tahminci(None)
+        self.klasor = os.path.abspath(klasor) if klasor else None
+        self.kayit = os.path.abspath(
+            kayit or (os.path.join(self.klasor, "iskeletler.jsonl") if self.klasor
+                      else os.path.join(os.path.dirname(os.path.dirname(
+                          os.path.abspath(__file__))), "_data", "etiketler",
+                          "iskeletler.jsonl")))
+        os.makedirs(os.path.dirname(self.kayit), exist_ok=True)
 
-    def cikti_yolu(self, ad: str, kare: int) -> str:
-        if self.cikti:
-            return self.cikti
-        kok = os.path.splitext(os.path.basename(ad or "iskelet"))[0]
-        return os.path.abspath(f"{kok}_iskelet_{kare}.json")
+    # -- kayit dosyasi --------------------------------------------------
+    def kayitlar(self) -> dict[tuple[str, int], dict]:
+        out: dict[tuple[str, int], dict] = {}
+        if not os.path.exists(self.kayit):
+            return out
+        with open(self.kayit) as f:
+            for satir in f:
+                satir = satir.strip()
+                if not satir:
+                    continue
+                try:
+                    r = json.loads(satir)
+                except json.JSONDecodeError:
+                    continue          # yarim yazilmis satir kaydi bosa dusurmesin
+                out[(r.get("dosya", ""), int(r.get("kare", 0)))] = r
+        return out
+
+    def kaydet(self, kayit: dict) -> None:
+        """(dosya, kare) anahtarina gore ekler ya da gunceller.
+
+        Dosya BASTAN yaziliyor, satir eklenmiyor: guncelleme yapabilmek icin
+        baska yol yok ve dosya birkac yuz satirdan buyumeyecek."""
+        hepsi = self.kayitlar()
+        hepsi[(kayit["dosya"], int(kayit["kare"]))] = kayit
+        gecici = self.kayit + ".tmp"
+        with open(gecici, "w") as f:
+            for k in sorted(hepsi):
+                f.write(json.dumps(hepsi[k], ensure_ascii=False) + "\n")
+        os.replace(gecici, self.kayit)      # yarim dosya birakma
+
+    def dosyalar(self) -> list[str]:
+        if not self.klasor:
+            return []
+        return sorted(os.path.basename(y) for y in
+                      glob.glob(os.path.join(self.klasor, "*.png")))
 
 
 def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
@@ -569,8 +701,34 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
                 self._detect(govde)
             elif self.path == "/save":
                 self._save(govde)
+            elif self.path == "/liste":
+                bitmis = {d for d, _ in durum.kayitlar()}
+                self._json(200, {
+                    "klasor": durum.klasor,
+                    "kayit": durum.kayit,
+                    "dosyalar": [{"ad": a, "bitti": a in bitmis}
+                                 for a in durum.dosyalar()]})
+            elif self.path == "/dosya":
+                self._dosya(govde)
             else:
                 self._json(404, {"hata": "bilinmeyen uc"})
+
+        def _dosya(self, govde: dict):
+            """Klasordeki bir PNG'yi data-URI olarak dondurur.
+
+            Ad yalnizca DOSYA ADI olarak kullaniliyor (`basename`): istemciden
+            gelen bir yolun klasor disina cikmasina izin verilmemeli."""
+            if not durum.klasor:
+                self._json(400, {"hata": "klasor kipi kapali"})
+                return
+            ad = os.path.basename(str(govde.get("ad", "")))
+            yol = os.path.join(durum.klasor, ad)
+            if not ad or not os.path.exists(yol):
+                self._json(404, {"hata": f"dosya yok: {ad}"})
+                return
+            with open(yol, "rb") as f:
+                ham = base64.b64encode(f.read()).decode()
+            self._json(200, {"ad": ad, "sprite": f"data:image/png;base64,{ham}"})
 
         def _detect(self, govde: dict):
             try:
@@ -586,6 +744,19 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
             except ValueError as err:
                 self._json(400, {"hata": str(err)})
                 return
+            # KAYITLI DUZELTME MODELIN TAHMININI EZER. Bir kareye geri
+            # donmek yapilan duzeltmeyi cope atmamali.
+            kayitli = durum.kayitlar().get(
+                (os.path.basename(govde.get("ad", "") or ""), int(govde.get("kare", 0))))
+            yuklendi = False
+            if kayitli and kayitli.get("noktalar"):
+                try:
+                    isk = sk.Iskelet({a: (float(v[0]), float(v[1]))
+                                      for a, v in kayitli["noktalar"].items()},
+                                     dict(isk.z), olculen=frozenset(), supheli=frozenset())
+                    yuklendi = True
+                except (TypeError, ValueError, KeyError):
+                    pass
             durum.z = {a: float(v) for a, v in isk.z.items()}
             # Govde ekseni: siluet kutusunun ortasi. Hiza kilavuzu bunu
             # "merkez" cizgisi ve ayna ekseni olarak kullaniyor.
@@ -600,7 +771,9 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
                 "supheli": sorted(isk.supheli),
                 "noktalar": {a: [round(float(x), 1), round(float(y), 1)]
                              for a, (x, y) in isk.noktalar.items()},
-                "cikti": durum.cikti_yolu(govde.get("ad", ""), int(govde.get("kare", 0))),
+                "kayit": durum.kayit,
+                "yuklendi": yuklendi,
+                "tahminci": durum.tahminci.ad,
             })
 
         def _save(self, govde: dict):
@@ -611,17 +784,36 @@ def _sunucu(sayfa: str, durum: Durum, port: int, tarayici_ac: bool) -> None:
             except (KeyError, TypeError, ValueError) as err:
                 self._json(400, {"hata": f"iskelet gecersiz: {err}"})
                 return
-            yol = durum.cikti_yolu(govde.get("ad", ""), int(govde.get("kare", 0)))
+            ad = os.path.basename(govde.get("ad", "") or "iskelet")
+            kare = int(govde.get("kare", 0))
+            # `keypoints` PixelLab konvansiyonunda, yani 0-1 NORMALIZE.
+            # `to_pixellab()` piksel veriyor; boldurmezsek ayni dosyada iki
+            # farkli birim olusuyor (toplu etiketleyici normalize yaziyor) ve
+            # okuyan taraf sessizce yanlis olcekte poz kuruyor.
+            w = float(govde.get("w") or 0) or 1.0
+            h = float(govde.get("h") or 0) or 1.0
+            kp_n = [dict(k, x=k["x"] / w, y=k["y"] / h) for k in isk.to_pixellab()]
+            # Yon DOSYA ADINDAN turetiliyor; acilir listeye guvenmek yanlisti —
+            # varsayilanda kalinca 18 kare "south" olarak kaydedildi, oysa
+            # iceride dort yon vardi.
+            yon = next((y for y in ("north-east", "north-west", "south-east",
+                                    "south-west", "north", "south", "east", "west")
+                        if f"_{y}_" in ad), govde.get("yon", "south"))
             try:
-                with open(yol, "w") as f:
-                    json.dump({"direction": govde.get("yon", "south"),
-                               "frame": int(govde.get("kare", 0)),
-                               "keypoints": isk.to_pixellab()}, f, indent=2)
+                durum.kaydet({
+                    "dosya": ad, "kare": kare,
+                    "yon": yon,
+                    "keypoints": kp_n,
+                    "noktalar": {a: [round(float(x), 2), round(float(y), 2)]
+                                 for a, (x, y) in isk.noktalar.items()},
+                    "elle": True,
+                })
             except OSError as err:
                 self._json(400, {"hata": f"yazilamadi: {err}"})
                 return
-            print(f"Kaydedildi: {yol}")
-            self._json(200, {"yol": yol})
+            n = len(durum.kayitlar())
+            print(f"Kaydedildi: {ad} kare {kare} -> {durum.kayit}  ({n} etiket)")
+            self._json(200, {"yol": durum.kayit, "sayi": n})
 
     srv = http.server.HTTPServer(("127.0.0.1", port), Islem)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -652,6 +844,12 @@ def main(argv=None):
     p.add_argument("--sezgisel", action="store_true",
                    help="Modeli hic kullanma. Olculdu: sezgisel tahminci "
                         "gorulmemis karakterde 13.46px, model 1.51-4.06px.")
+    p.add_argument("--klasor", default=None,
+                   help="PNG klasoru. Verilirse arayuzde ileri/geri gezinme "
+                        "acilir ve kaydedilmis kareler isaretlenir.")
+    p.add_argument("--kayit", default=None,
+                   help="Etiket JSONL'i. Varsayilan: klasor icinde "
+                        "iskeletler.jsonl, klasorsuz modda _data/etiketler/.")
     p.add_argument("--port", type=int, default=0, help="0 = bos port secilir")
     p.add_argument("--no-open", action="store_true",
                    help="Tarayiciyi kendiliginden acma")
@@ -662,7 +860,7 @@ def main(argv=None):
              .replace("__LABELS__", json.dumps(list(sk.LABELS))))
     kok_proje = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ckpt = None if args.sezgisel else (args.model or en_guncel_model(kok_proje))
-    tahminci = _Tahminci(ckpt)
+    tahminci = Tahminci(ckpt)
     if tahminci.ad == "model":
         print(f"Iskelet tahmincisi: MODEL  ({os.path.basename(ckpt)})")
     else:
@@ -670,7 +868,10 @@ def main(argv=None):
               "  Egitmek icin: ~/ComfyUI/venv/bin/python tools/pose_model.py "
               "train _data/karisik_yan --holdout yok \\\n"
               "                 --ckpt _data/modeller/uretim.pt")
-    _sunucu(sayfa, Durum(args.output, args.frame_size, tahminci),
+    if args.klasor and not os.path.isdir(args.klasor):
+        raise SystemExit(f"HATA: klasor yok: {args.klasor}")
+    _sunucu(sayfa, Durum(args.output, args.frame_size, tahminci,
+                         args.kayit, args.klasor),
             args.port, not args.no_open)
     return 0
 

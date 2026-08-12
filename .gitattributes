@@ -6,4 +6,6 @@
 *.icns binary
 *.dmg binary
 *.exe binary
-models/*.pt filter=lfs diff=lfs merge=lfs -text
+# Model checkpoint'leri LFS'e. Desen models/*.pt degil *.pt: alt klasordeki
+# bir checkpoint sessizce 17 MB'lik ham blob olarak git'e girmesin.
+*.pt filter=lfs diff=lfs merge=lfs -text
