@@ -438,8 +438,17 @@ function yakinlik(d){ olcek = Math.max(2, Math.min(30, olcek+d)); ciz(); }
 
 /* ---- surukle-birak duzenleme ---- */
 function yerel(e) {
+  /* Ekrandaki olcegi VARSAYMIYORUZ, olcuyoruz. Onceki surum dogrudan
+     `olcek`e boluyordu, yani tuvalin ekranda tam olarak w*olcek piksel
+     oldugunu varsayiyordu. Tuval bir flex ogesi ve flex-shrink varsayilan
+     olarak 1 — pencere dar oldugunda CSS onu daraltir, o zaman
+     getBoundingClientRect gercek boyutu dondurur ve varsayim bozulur:
+     tikladigin yerle nokta arasinda kayma olusur. r.width/tuval.width
+     gercek olcegi verir ve CSS ne yaparsa yapsin dogru kalir. */
   const r = tuval.getBoundingClientRect();
-  return [(e.clientX-r.left)/olcek - .5, (e.clientY-r.top)/olcek - .5];
+  const sx = r.width  ? tuval.width  / r.width  : 1;
+  const sy = r.height ? tuval.height / r.height : 1;
+  return [(e.clientX-r.left)*sx/olcek - .5, (e.clientY-r.top)*sy/olcek - .5];
 }
 tuval.addEventListener('mousedown', e => {
   if (!durum) return;
