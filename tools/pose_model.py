@@ -180,8 +180,15 @@ def hedef_dagilim(deger: float, bin_say: int, sigma: float = 2.0):
 
 
 class Kume:
-    def __init__(self, kok, satirlar, tuval=128):
+    def __init__(self, kok, satirlar, tuval=128, siluet=False):
         self.kok, self.satirlar, self.tuval = kok, satirlar, tuval
+        # SILUET modu: renk atiliyor, yalnizca alfa maskesi kaliyor.
+        # Hipotez, iskeletin zaten siluetten okunabilecegi ve renkten
+        # bagimsiz olmanin cizim tarzina genellemeyi kolaylastiracagi.
+        # Olculdu (renkle egitilmis modele siluet verildiginde): 0.84 ->
+        # 11.99px, yani mevcut model renge cok yasliyor — ama bu siluetin
+        # bilgi tasimadigini DEGIL, modelin siluet gormedigini gosterir.
+        self.siluet = siluet
 
     def __len__(self):
         return len(self.satirlar)
@@ -190,7 +197,14 @@ class Kume:
         from PIL import Image
         s = self.satirlar[i]
         im = np.array(Image.open(os.path.join(self.kok, s["gorsel"])).convert("RGBA"))
-        rgb = np.where(im[:, :, 3:4] > 0, im[:, :, :3], 255).astype(np.float32) / 255.0
+        if self.siluet:
+            # Opak = koyu, seffaf = beyaz. Tek kanal yerine ucu de ayni:
+            # govde ImageNet istatistikleriyle normalize edilmis 3 kanal
+            # bekliyor ve on egitimli agirliklar oyle ogrenildi.
+            m = (im[:, :, 3:4] > 0)
+            rgb = np.where(m, 40.0, 255.0).repeat(3, axis=2).astype(np.float32) / 255.0
+        else:
+            rgb = np.where(im[:, :, 3:4] > 0, im[:, :, :3], 255).astype(np.float32) / 255.0
         x = rgb.transpose(2, 0, 1)
         ort = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
         std = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
@@ -251,7 +265,7 @@ def hata_px(model, kume, dev, tuval, parti=16):
 
 
 def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
-         derinlik=3, tohum=0):
+         derinlik=3, tohum=0, siluet=False):
     torch = _torch()
     import torch.nn.functional as F
 
@@ -279,7 +293,7 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
                 f"Tum veriyle egitmek icin --holdout yok.")
         print(f"Egitim {len(egitim)} ornek | Test (holdout={holdout}) {len(test)} ornek")
 
-    ke, kt = Kume(kok, egitim, tuval), Kume(kok, test, tuval)
+    ke, kt = Kume(kok, egitim, tuval, siluet), Kume(kok, test, tuval, siluet)
     dev = aygit()
     model = PozModeli(tuval, len(sk.LABELS), on_egitimli, derinlik).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -325,6 +339,7 @@ def egit(kok, holdout, epok, parti, lr, cikti, on_egitimli=True, tuval=128,
                             "epok": e + 1, "epok_toplam": epok,
                             "parti": parti, "lr": lr, "tohum": tohum,
                             "on_egitimli": on_egitimli,
+                            "siluet": siluet,
                             "holdout_hatasi": None if uretim else round(float(eh), 3),
                             "uretim": uretim,
                             "tarih": time.strftime("%Y-%m-%d %H:%M"),
@@ -362,6 +377,9 @@ def main(argv=None):
                    help="Hangi ResNet katmani: 3=layer3 (8x8), 2=layer2 (16x16)")
     p.add_argument("--scratch", action="store_true",
                    help="On egitimli govde KULLANMA (karsilastirma icin)")
+    p.add_argument("--siluet", action="store_true",
+                   help="Girdiyi SILUETE cevir (renk atilir). Cizim tarzindan "
+                        "bagimsiz olmayi hedefler.")
     p.add_argument("--seed", type=int, default=0,
                    help="Rastgelelik tohumu; ayni ayarin kosu-arasi "
                         "dagilimini olcmek icin degistir")
@@ -371,7 +389,7 @@ def main(argv=None):
     if args.komut == "train":
         egit(args.veri, args.holdout, args.epochs, args.batch, args.lr,
              ckpt, on_egitimli=not args.scratch, derinlik=args.depth,
-             tohum=args.seed)
+             tohum=args.seed, siluet=args.siluet)
     else:
         torch = _torch()
         d = torch.load(ckpt, map_location="cpu")

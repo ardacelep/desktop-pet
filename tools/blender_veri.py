@@ -216,8 +216,55 @@ def kare_verisi(sahne, arm, kam):
     return kp, gor, bosluk
 
 
+# Kamera KARAKTERIN ETRAFINDA donduruluyor. Tek acidan 32 kare, mevcut 4363
+# ornekli kumeye %0.7 ekler — olcek egrimize (hata ~ n^-0.125) gore gorunmez.
+# Sekiz yon Chen'in 2111 ornegiyle karsilastirilabilir bir hacim veriyor, ve
+# zaten olculen eksigimiz gorus acisi cesitliligi.
+YONLER = {
+    "south":      0.0,     # karakterin onu kameraya donuk
+    "south-east": 45.0,
+    "east":       90.0,    # saga bakan profil (walk_right konvansiyonumuz)
+    "north-east": 135.0,
+    "north":      180.0,
+    "north-west": 225.0,
+    "west":       270.0,
+    "south-west": 315.0,
+}
+
+
+def kamerayi_yerlestir(kam, arm, aci_derece, pay=1.25):
+    """Kamerayi karakterin etrafinda `aci` kadar dondurup ortalar.
+
+    Ortografik kamera kullaniliyor (sahnede zaten oyle): sprite'larda
+    perspektif bozulmasi olmaz, karakterin oranlari mesafeden bagimsiz kalir."""
+    kalca = arm.matrix_world @ arm.pose.bones["mixamorig:Hips"].head
+    ayak = min((arm.matrix_world @ arm.pose.bones[b].head).z
+               for b in ("mixamorig:LeftToe_End", "mixamorig:RightToe_End"))
+    tepe = (arm.matrix_world @ arm.pose.bones["mixamorig:Head"].tail).z
+    boy = max(tepe - ayak, 1e-6)
+    merkez = Vector((kalca.x, kalca.y, (ayak + tepe) / 2.0))
+
+    # Karakterin ILERI yonu omuz ekseninden turetiliyor; aci ona GORE veriliyor
+    # ki farkli aksiyonlarda ayni "south" ayni sey olsun.
+    sag = arm.matrix_world @ arm.pose.bones["mixamorig:RightArm"].head
+    sol = arm.matrix_world @ arm.pose.bones["mixamorig:LeftArm"].head
+    yana = (sol - sag).normalized()
+    ileri = yana.cross(Vector((0, 0, 1))).normalized()
+
+    t = math.radians(aci_derece)
+    # aci=0 -> kamera karakterin ONUNDE (ileri yonunde)
+    yon = Vector((ileri.x * math.cos(t) - ileri.y * math.sin(t),
+                  ileri.x * math.sin(t) + ileri.y * math.cos(t), 0)).normalized()
+    kam.location = merkez + yon * (boy * 4.0)
+    kam.rotation_mode = "QUATERNION"
+    kam.rotation_quaternion = (merkez - kam.location).to_track_quat("-Z", "Y")
+    if kam.data.type == "ORTHO":
+        kam.data.ortho_scale = boy * pay
+    bpy.context.view_layer.update()
+
+
 def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
-         seffaf=True, cozunurluk=512):
+         seffaf=True, cozunurluk=512, yonler=None):
     sahne = bpy.context.scene
     arm = _arm(armature)
     kam = sahne.camera
@@ -240,27 +287,44 @@ def uret(cikti, kare_araligi=None, kaynak="blender", armature=None,
     # Etiketler ANINDA yaziliyor: uzun kosuda dusen bir render her seyi
     # goturmesin (ayni ders chen_to_pixelart ve pixellab_generate'de de var).
     yol = os.path.join(cikti, "etiketler.jsonl")
+    kam_onceki = (kam.location.copy(), kam.rotation_mode,
+                  kam.rotation_quaternion.copy() if kam.rotation_mode == "QUATERNION"
+                  else kam.rotation_euler.copy(),
+                  kam.data.ortho_scale if kam.data.type == "ORTHO" else None)
+    secilen = yonler or ["east"]
     n = 0
     with open(yol, "w", buffering=1) as f:
-        for kare in range(int(a), int(b) + 1):
-            sahne.frame_set(kare)
-            dosya = f"{kaynak}_{kare:05d}.png"
-            sahne.render.filepath = os.path.join(gorseller, dosya)
-            bpy.ops.render.render(write_still=True)
-            kp, gor, bosluk = kare_verisi(sahne, arm, kam)
-            f.write(json.dumps({
-                "gorsel": f"gorseller/{dosya}",
-                "kaynak": f"blender/{kaynak}_{kare:05d}",
-                "artirma": "ham",
-                "keypoints": kp,
-                "gorunur": gor,
-                # Ham bosluk da yaziliyor: esik sonradan degistirilebilsin,
-                # veri yeniden uretilmeden.
-                "bosluk": bosluk,
-                "cozunurluk": cozunurluk,
-            }, ensure_ascii=False) + "\n")
-            n += 1
-            print(f"  kare {kare}  ({n}) -> {dosya}", flush=True)
+        for yon_ad in secilen:
+            for kare in range(int(a), int(b) + 1):
+                sahne.frame_set(kare)
+                # Kamera HER KAREDE yeniden yerlestiriliyor: karakter yuruyusle
+                # yer degistiriyor, sabit kamera onu kadrajdan cikariyor.
+                kamerayi_yerlestir(kam, arm, YONLER[yon_ad])
+                dosya = f"{kaynak}_{yon_ad}_{kare:05d}.png"
+                sahne.render.filepath = os.path.join(gorseller, dosya)
+                bpy.ops.render.render(write_still=True)
+                kp, gor, bosluk = kare_verisi(sahne, arm, kam)
+                f.write(json.dumps({
+                    "gorsel": f"gorseller/{dosya}",
+                    "kaynak": f"blender/{kaynak}_{yon_ad}_{kare:05d}",
+                    "artirma": "ham",
+                    "yon": yon_ad,
+                    "keypoints": kp,
+                    "gorunur": gor,
+                    # Ham bosluk da yaziliyor: esik sonradan degistirilebilsin,
+                    # veri yeniden uretilmeden.
+                    "bosluk": bosluk,
+                    "cozunurluk": cozunurluk,
+                }, ensure_ascii=False) + "\n")
+                n += 1
+            print(f"  {yon_ad}: {int(b)-int(a)+1} kare  (toplam {n})", flush=True)
+    kam.location, kam.rotation_mode = kam_onceki[0], kam_onceki[1]
+    if kam_onceki[1] == "QUATERNION":
+        kam.rotation_quaternion = kam_onceki[2]
+    else:
+        kam.rotation_euler = kam_onceki[2]
+    if kam_onceki[3] is not None:
+        kam.data.ortho_scale = kam_onceki[3]
 
     (sahne.render.film_transparent, sahne.render.filepath,
      sahne.render.image_settings.file_format,
